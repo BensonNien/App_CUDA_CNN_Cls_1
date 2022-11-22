@@ -82,12 +82,19 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <CudaCompile Include="App_CUDA_CNN_Cls_1.cu" />
+    <CudaCompile Include="CUDACNNCls.cu" />
+    <CudaCompile Include="CUDACNNDataset.cu" />
+    <CudaCompile Include="CUDACNNLayer.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CPUCNNCls.h" />
     <ClInclude Include="CPUCNNDataset.h" />
     <ClInclude Include="CPUCNNDataStruct.h" />
     <ClInclude Include="CPUCNNLayer.h" />
+    <ClInclude Include="CUDACNNCls.cuh" />
+    <ClInclude Include="CUDACNNDataset.cuh" />
+    <ClInclude Include="CUDACNNDataStruct.cuh" />
+    <ClInclude Include="CUDACNNLayer.cuh" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CPUCNNCls.cpp" />

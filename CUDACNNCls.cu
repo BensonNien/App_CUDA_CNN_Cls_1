@@ -1,17 +1,17 @@
 /******************************************************************************
 Date:  2022/09
 Author: CHU-MIN, NIEN
-Description:
+Description: CUDA ver.
 ******************************************************************************/
 #include <algorithm>
 
-#include "CPUCNNCls.h"
-#include "CPUCNNLayer.h"
+#include "CUDACNNCls.cuh"
+#include "CUDACNNLayer.cuh"
 
-// CPU_Algo_Lib::CPUCNN
+// CUDA_Algo_Lib::CUDACNN
 
 #define DERIV_ACTIVE_RELU(S) 1 // derivative of the relu as a function of the relu's output
-namespace CPU_Algo_Lib
+namespace CUDA_Algo_Lib
 {
 	size_t g_idx_epoch = 0;//index of epoch
 	size_t g_idx_itor = 0;//index of iterator
@@ -20,14 +20,14 @@ namespace CPU_Algo_Lib
 	size_t g_iteration_num = 0;//number of g_iteration_num
 }
 
-void CPU_Algo_Lib::CPUCNN::Train(CPU_Algo_Lib::DatasetLoadingParamPKG& r_dataset_param)
+void CUDA_Algo_Lib::CUDACNN::Train(CUDA_Algo_Lib::DatasetLoadingParamPKG& r_dataset_param)
 {
 	std::cout << "Start train" << std::endl;
 
-	CPU_Algo_Lib::g_iteration_num = r_dataset_param.total_num_images_ / batch_size_;
+	CUDA_Algo_Lib::g_iteration_num = r_dataset_param.total_num_images_ / batch_size_;
 	if ((r_dataset_param.total_num_images_ % batch_size_) != 0)
 	{
-		std::cout << "Please reset CPU_Algo_Lib::CPUCNN::batch_size_!" << std::endl;
+		std::cout << "Please reset CUDA_Algo_Lib::CUDACNN::batch_size_!" << std::endl;
 	}
 
 	float* p_train_batch_data = nullptr;
@@ -39,10 +39,10 @@ void CPU_Algo_Lib::CPUCNN::Train(CPU_Algo_Lib::DatasetLoadingParamPKG& r_dataset
 	vec_train_batch_label.reserve(batch_size_ * r_dataset_param.num_output_cls_);
 	vec_train_batch_label.resize(batch_size_ * r_dataset_param.num_output_cls_);
 
-	for (CPU_Algo_Lib::g_idx_iteration_num = 0; CPU_Algo_Lib::g_idx_iteration_num < CPU_Algo_Lib::g_iteration_num; CPU_Algo_Lib::g_idx_iteration_num++)
+	for (CUDA_Algo_Lib::g_idx_iteration_num = 0; CUDA_Algo_Lib::g_idx_iteration_num < CUDA_Algo_Lib::g_iteration_num; CUDA_Algo_Lib::g_idx_iteration_num++)
 	{
-		std::cout << "NO.of iteration(training): " << CPU_Algo_Lib::g_idx_iteration_num << std::endl;
-		size_t idx_loaded_dataset_batch = CPU_Algo_Lib::g_idx_iteration_num % (r_dataset_param.total_num_images_ / batch_size_);
+		std::cout << "NO.of iteration(training): " << CUDA_Algo_Lib::g_idx_iteration_num << std::endl;
+		size_t idx_loaded_dataset_batch = CUDA_Algo_Lib::g_idx_iteration_num % (r_dataset_param.total_num_images_ / batch_size_);
 		for (size_t idx_batch = 0; idx_batch < batch_size_; idx_batch++)
 		{
 			std::cout << "NO.of batch(training): " << idx_batch << std::endl;
@@ -67,15 +67,15 @@ void CPU_Algo_Lib::CPUCNN::Train(CPU_Algo_Lib::DatasetLoadingParamPKG& r_dataset
 
 }
 
-void CPU_Algo_Lib::CPUCNN::Setup(size_t batch_size)
+void CUDA_Algo_Lib::CUDACNN::Setup(size_t batch_size)
 {
-	CPU_Algo_Lib::VECCPUCNNLayers::iterator iter = vec_layers_.begin();
+	CUDA_Algo_Lib::VECCUDACNNLayers::iterator iter = vec_layers_.begin();
 
 	(*iter).InitOutputMaps(batch_size);
 	iter++;
 	for (iter; iter < vec_layers_.end(); iter++)
 	{
-		CPU_Algo_Lib::g_idx_iter_init_bias = CPU_Algo_Lib::g_idx_iter_init_bias + 1;
+		CUDA_Algo_Lib::g_idx_iter_init_bias = CUDA_Algo_Lib::g_idx_iter_init_bias + 1;
 
 		size_t frontMapNum = (*(iter - 1)).GetOutMapNum();
 
@@ -90,7 +90,7 @@ void CPU_Algo_Lib::CPUCNN::Setup(size_t batch_size)
 			(*iter).InitKernel(frontMapNum);
 			(*iter).InitLastStepDeltaKernel(frontMapNum);//for adding momentum
 			//each map has one bias_, so frontMapNum is not necessary
-			(*iter).InitBias(frontMapNum, CPU_Algo_Lib::g_idx_iter_init_bias);
+			(*iter).InitBias(frontMapNum, CUDA_Algo_Lib::g_idx_iter_init_bias);
 			(*iter).InitErros(batch_size);
 			// each r_layer should initialize output map
 			(*iter).InitOutputMaps(batch_size);
@@ -104,14 +104,14 @@ void CPU_Algo_Lib::CPUCNN::Setup(size_t batch_size)
 		case 'H':
 			(*iter).InitOutputKernel(frontMapNum, (*(iter - 1)).GetMapSize());
 			(*iter).InitOutputLastStepDeltaKernel(frontMapNum, (*(iter - 1)).GetMapSize());//for adding momentum			
-			(*iter).InitBias(frontMapNum, CPU_Algo_Lib::g_idx_iter_init_bias);
+			(*iter).InitBias(frontMapNum, CUDA_Algo_Lib::g_idx_iter_init_bias);
 			(*iter).InitErros(batch_size);
 			(*iter).InitOutputMaps(batch_size);
 			break;
 		case 'O':
 			(*iter).InitOutputKernel(frontMapNum, (*(iter - 1)).GetMapSize());
 			(*iter).InitOutputLastStepDeltaKernel(frontMapNum, (*(iter - 1)).GetMapSize());//for adding momentum
-			(*iter).InitBias(frontMapNum, CPU_Algo_Lib::g_idx_iter_init_bias);
+			(*iter).InitBias(frontMapNum, CUDA_Algo_Lib::g_idx_iter_init_bias);
 			(*iter).InitErros(batch_size);
 			(*iter).InitOutputMaps(batch_size);
 			break;
@@ -121,15 +121,15 @@ void CPU_Algo_Lib::CPUCNN::Setup(size_t batch_size)
 	}
 }
 
-void CPU_Algo_Lib::CPUCNN::SetupTest(size_t batch_size)
+void CUDA_Algo_Lib::CUDACNN::SetupTest(size_t batch_size)
 {
-	CPU_Algo_Lib::VECCPUCNNLayers::iterator iter = vec_layers_.begin();
+	CUDA_Algo_Lib::VECCUDACNNLayers::iterator iter = vec_layers_.begin();
 
 	(*iter).InitOutputMaps(batch_size);
 	iter++;
 	for (iter; iter < vec_layers_.end(); iter++)
 	{
-		CPU_Algo_Lib::g_idx_iter_init_bias = CPU_Algo_Lib::g_idx_iter_init_bias + 1;
+		CUDA_Algo_Lib::g_idx_iter_init_bias = CUDA_Algo_Lib::g_idx_iter_init_bias + 1;
 
 		size_t frontMapNum = (*(iter - 1)).GetOutMapNum();
 
@@ -151,16 +151,16 @@ void CPU_Algo_Lib::CPUCNN::SetupTest(size_t batch_size)
 	}
 }
 
-void CPU_Algo_Lib::CPUCNN::BackPropagation(float* p_batch_data, float* p_batch_label)
+void CUDA_Algo_Lib::CUDACNN::BackPropagation(float* p_batch_data, float* p_batch_label)
 {
 	SetOutLayerErrors(p_batch_data, p_batch_label);
 	SetHiddenLayerErrors();
 }
 
-void CPU_Algo_Lib::CPUCNN::Forward(float* p_batch_data)
+void CUDA_Algo_Lib::CUDACNN::Forward(float* p_batch_data)
 {
 	SetInLayerOutput(p_batch_data);
-	CPU_Algo_Lib::VECCPUCNNLayers::iterator iter = vec_layers_.begin()+1;
+	CUDA_Algo_Lib::VECCUDACNNLayers::iterator iter = vec_layers_.begin()+1;
 	//iter++;
 	for (iter; iter < vec_layers_.end(); iter++)
 	{
@@ -185,24 +185,21 @@ void CPU_Algo_Lib::CPUCNN::Forward(float* p_batch_data)
 	}
 }
 
-void CPU_Algo_Lib::CPUCNN::SetInLayerOutput(float* p_batch_data)
+void CUDA_Algo_Lib::CUDACNN::SetInLayerOutput(float* p_batch_data)
 {
-	std::cout << "Execute CPU_Algo_Lib::CPUCNN::SetInLayerOutput()" << std::endl;
+	std::cout << "Execute CUDA_Algo_Lib::CUDACNN::SetInLayerOutput()" << std::endl;
 
-	CPU_Algo_Lib::VECCPUCNNLayers::iterator iter = vec_layers_.begin();
+	CUDA_Algo_Lib::VECCUDACNNLayers::iterator iter = vec_layers_.begin();
 
 	RectSize map_size = (*iter).GetMapSize();
 	size_t out_map_num = (*iter).GetOutMapNum();
 
-	//std::copy(p_batch_data, (p_batch_data + (batch_size_ * out_map_num * map_size.rows_ * map_size.cols_)), (*iter).vec_output_maps_.begin());
-
-	memcpy((*iter).vec_output_maps_.data(), p_batch_data, ((batch_size_ * out_map_num * map_size.rows_ * map_size.cols_) * sizeof(float)));
-
+	std::copy(p_batch_data, (p_batch_data + (batch_size_ * out_map_num * map_size.rows_ * map_size.cols_)), (*iter).vec_output_maps_.begin());
 }
 // for change the value in m_Layers
-void CPU_Algo_Lib::CPUCNN::SetConvOutput(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU_Algo_Lib::CPUCNNLayer& r_lastlayer)
+void CUDA_Algo_Lib::CUDACNN::SetConvOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
 {
-	std::cout << "Execute CPU_Algo_Lib::CPUCNN::SetConvOutput()" << std::endl;
+	std::cout << "Execute CUDA_Algo_Lib::CUDACNN::SetConvOutput()" << std::endl;
 	
 	size_t layer_map_num = r_layer.GetOutMapNum();
 	size_t lastlayer_map_num = r_lastlayer.GetOutMapNum();
@@ -255,9 +252,9 @@ void CPU_Algo_Lib::CPUCNN::SetConvOutput(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU
 
 }
 
-void CPU_Algo_Lib::CPUCNN::SetSampOutput(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU_Algo_Lib::CPUCNNLayer& r_lastlayer)
+void CUDA_Algo_Lib::CUDACNN::SetSampOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
 {
-	std::cout << "Execute CPU_Algo_Lib::CPUCNN::SetSampOutput()" << std::endl;
+	std::cout << "Execute CUDA_Algo_Lib::CUDACNN::SetSampOutput()" << std::endl;
 
 	size_t lastlayer_map_num = r_lastlayer.GetOutMapNum();
 	size_t lastlayer_map_x = r_lastlayer.GetMapSize().rows_;
@@ -288,9 +285,9 @@ void CPU_Algo_Lib::CPUCNN::SetSampOutput(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU
 	}
 }
 
-void CPU_Algo_Lib::CPUCNN::SetFCHLayerOutput(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU_Algo_Lib::CPUCNNLayer& r_lastlayer)
+void CUDA_Algo_Lib::CUDACNN::SetFCHLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
 {
-	std::cout << "Execute CPU_Algo_Lib::CPUCNN::SetFCHLayerOutput()" << std::endl;
+	std::cout << "Execute CUDA_Algo_Lib::CUDACNN::SetFCHLayerOutput()" << std::endl;
 
 	size_t layer_map_num = r_layer.GetOutMapNum();
 	size_t lastlayer_map_num = r_lastlayer.GetOutMapNum();
@@ -345,9 +342,9 @@ void CPU_Algo_Lib::CPUCNN::SetFCHLayerOutput(CPU_Algo_Lib::CPUCNNLayer& r_layer,
 }
 
 // ReLU+Softmax function
-void CPU_Algo_Lib::CPUCNN::SetOutLayerOutput(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU_Algo_Lib::CPUCNNLayer& r_lastlayer)
+void CUDA_Algo_Lib::CUDACNN::SetOutLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
 {
-	std::cout << "Execute CPU_Algo_Lib::CPUCNN::SetOutLayerOutput()" << std::endl;
+	std::cout << "Execute CUDA_Algo_Lib::CUDACNN::SetOutLayerOutput()" << std::endl;
 
 	size_t layer_map_num = r_layer.GetOutMapNum();
 	size_t lastlayer_map_num = r_lastlayer.GetOutMapNum();
@@ -435,9 +432,9 @@ void CPU_Algo_Lib::CPUCNN::SetOutLayerOutput(CPU_Algo_Lib::CPUCNNLayer& r_layer,
 
 }
 
-void CPU_Algo_Lib::CPUCNN::SetOutLayerErrors(float* p_input_maps, float* p_target_labels)
+void CUDA_Algo_Lib::CUDACNN::SetOutLayerErrors(float* p_input_maps, float* p_target_labels)
 {
-	CPU_Algo_Lib::VECCPUCNNLayers::iterator iter = vec_layers_.end();
+	CUDA_Algo_Lib::VECCUDACNNLayers::iterator iter = vec_layers_.end();
 	iter--;
 	size_t layer_outmap_num = (*iter).GetOutMapNum();
 	float mean_error = 0.0, max_error = 0.0;
@@ -480,7 +477,7 @@ void CPU_Algo_Lib::CPUCNN::SetOutLayerErrors(float* p_input_maps, float* p_targe
 	//// 	std::cout<<"The max error of one output in mini batch: "<<max_error<<std::endl;
 }
 
-void CPU_Algo_Lib::CPUCNN::SetFCHiddenLayerErrors(CPU_Algo_Lib::CPUCNNLayer& Lastlayer, CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU_Algo_Lib::CPUCNNLayer& r_nextlayer)//for add FC hiddenlayer
+void CUDA_Algo_Lib::CUDACNN::SetFCHiddenLayerErrors(CUDA_Algo_Lib::CUDACNNLayer& Lastlayer, CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_nextlayer)//for add FC hiddenlayer
 {
 	size_t lastlayer_outmap_num = Lastlayer.GetOutMapNum();
 	size_t layer_outmap_num = r_layer.GetOutMapNum();
@@ -579,9 +576,9 @@ void CPU_Algo_Lib::CPUCNN::SetFCHiddenLayerErrors(CPU_Algo_Lib::CPUCNNLayer& Las
 
 }
 
-void CPU_Algo_Lib::CPUCNN::SetHiddenLayerErrors()
+void CUDA_Algo_Lib::CUDACNN::SetHiddenLayerErrors()
 {
-	CPU_Algo_Lib::VECCPUCNNLayers::iterator iter = vec_layers_.end();
+	CUDA_Algo_Lib::VECCUDACNNLayers::iterator iter = vec_layers_.end();
 	iter = iter - 2;
 	for (iter; iter > vec_layers_.begin(); iter--)
 	{
@@ -602,7 +599,7 @@ void CPU_Algo_Lib::CPUCNN::SetHiddenLayerErrors()
 	}
 }
 
-void CPU_Algo_Lib::CPUCNN::SetSampErrors(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU_Algo_Lib::CPUCNNLayer& r_nextlayer)
+void CUDA_Algo_Lib::CUDACNN::SetSampErrors(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_nextlayer)
 {
 	size_t layer_outmap_num = r_layer.GetOutMapNum();
 	size_t layer_outmap_rows = r_layer.GetMapSize().rows_;
@@ -651,7 +648,7 @@ void CPU_Algo_Lib::CPUCNN::SetSampErrors(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU
 
 }
 
-void CPU_Algo_Lib::CPUCNN::SetConvErrors(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU_Algo_Lib::CPUCNNLayer& r_nextlayer)
+void CUDA_Algo_Lib::CUDACNN::SetConvErrors(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_nextlayer)
 {
 	size_t layer_outmap_num = r_layer.GetOutMapNum();
 	size_t layer_outmap_rows = r_layer.GetMapSize().rows_;
@@ -692,20 +689,20 @@ void CPU_Algo_Lib::CPUCNN::SetConvErrors(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU
 	}
 }
 
-void CPU_Algo_Lib::CPUCNN::UpdateParas()
+void CUDA_Algo_Lib::CUDACNN::UpdateParas()
 {
-	CPU_Algo_Lib::VECCPUCNNLayers::iterator iter = vec_layers_.begin();
+	CUDA_Algo_Lib::VECCUDACNNLayers::iterator iter = vec_layers_.begin();
 	iter++;
 
-	CPU_Algo_Lib::g_idx_itor = 0;//begining at index 0 r_layer
+	CUDA_Algo_Lib::g_idx_itor = 0;//begining at index 0 r_layer
 	char str_file_kernel[1000];// initialized properly
 	char str_file_bias[1000];// initialized properly
 
 	for (iter; iter < vec_layers_.end(); iter++)
 	{
-		CPU_Algo_Lib::g_idx_itor = CPU_Algo_Lib::g_idx_itor + 1;
-		sprintf(str_file_kernel, "./data/kernel_weight/kernel_weight_%d_%d", CPU_Algo_Lib::g_idx_itor, (*iter).GetType());
-		sprintf(str_file_bias, "./data/bias/bias_%d_%d", CPU_Algo_Lib::g_idx_itor, (*iter).GetType());
+		CUDA_Algo_Lib::g_idx_itor = CUDA_Algo_Lib::g_idx_itor + 1;
+		sprintf(str_file_kernel, "./data/kernel_weight/kernel_weight_%d_%d", CUDA_Algo_Lib::g_idx_itor, (*iter).GetType());
+		sprintf(str_file_bias, "./data/bias/bias_%d_%d", CUDA_Algo_Lib::g_idx_itor, (*iter).GetType());
 		//printf("%s", str_file_kernel);
 
 		switch ((*iter).GetType())
@@ -728,7 +725,7 @@ void CPU_Algo_Lib::CPUCNN::UpdateParas()
 	}
 }
 
-void CPU_Algo_Lib::CPUCNN::UpdateBias(CPU_Algo_Lib::CPUCNNLayer& r_layer, char* str_File_Bias, float eta)
+void CUDA_Algo_Lib::CUDACNN::UpdateBias(CUDA_Algo_Lib::CUDACNNLayer& r_layer, char* str_File_Bias, float eta)
 {
 	size_t layer_outmap_num = r_layer.GetOutMapNum();
 	size_t layer_outmap_rows = r_layer.GetMapSize().rows_;
@@ -745,7 +742,7 @@ void CPU_Algo_Lib::CPUCNN::UpdateBias(CPU_Algo_Lib::CPUCNNLayer& r_layer, char* 
 		r_layer.vec_bias_.at(idx_layer_outmap) += (eta * deltaBias);
 
 		/***save bias_***/
-		if ((CPU_Algo_Lib::g_iteration_num - 1) == CPU_Algo_Lib::g_idx_iteration_num) {
+		if ((CUDA_Algo_Lib::g_iteration_num - 1) == CUDA_Algo_Lib::g_idx_iteration_num) {
 			char str_file_bias_1[1000];
 			sprintf(str_file_bias_1, "%s_%d.txt", str_File_Bias, idx_layer_outmap);
 			FILE* fp_bias = fopen(str_file_bias_1, "w");
@@ -759,7 +756,7 @@ void CPU_Algo_Lib::CPUCNN::UpdateBias(CPU_Algo_Lib::CPUCNNLayer& r_layer, char* 
 
 }
 
-void CPU_Algo_Lib::CPUCNN::UpdateKernels(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU_Algo_Lib::CPUCNNLayer& r_lastlayer, char* str_File_Kernel, float eta, float alpha)
+void CUDA_Algo_Lib::CUDACNN::UpdateKernels(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer, char* str_File_Kernel, float eta, float alpha)
 {
 	size_t lastlayer_outmap_num = r_lastlayer.GetOutMapNum();
 	size_t lastlayer_outmap_rows = r_lastlayer.GetMapSize().rows_;
@@ -813,7 +810,7 @@ void CPU_Algo_Lib::CPUCNN::UpdateKernels(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU
 			CalArrayPlus(vec_delta_kernel_1.data(), p_layer_kernel, layer_kernel_rows, layer_kernel_cols);
 
 			/***save kernel_ weight***/
-			if ((CPU_Algo_Lib::g_iteration_num - 1) == CPU_Algo_Lib::g_idx_iteration_num) {
+			if ((CUDA_Algo_Lib::g_iteration_num - 1) == CUDA_Algo_Lib::g_idx_iteration_num) {
 				char str_file_kernel_1[1000];
 				sprintf(str_file_kernel_1, "%s_%d_%d.txt", str_File_Kernel, idx_lastlayer_outmap, idx_layer_outmap);
 
@@ -843,20 +840,20 @@ void CPU_Algo_Lib::CPUCNN::UpdateKernels(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU
 
 }
 
-void CPU_Algo_Lib::CPUCNN::LoadParas()
+void CUDA_Algo_Lib::CUDACNN::LoadParas()
 {
-	CPU_Algo_Lib::VECCPUCNNLayers::iterator iter = vec_layers_.begin();
+	CUDA_Algo_Lib::VECCUDACNNLayers::iterator iter = vec_layers_.begin();
 	iter++;
 
-	CPU_Algo_Lib::g_idx_itor = 0;//begining at index 0 r_layer
+	CUDA_Algo_Lib::g_idx_itor = 0;//begining at index 0 r_layer
 	char str_file_kernel[1000];// initialized properly
 	char str_file_bias[1000];// initialized properly
 
 	for (iter; iter < vec_layers_.end(); iter++)
 	{
-		CPU_Algo_Lib::g_idx_itor = CPU_Algo_Lib::g_idx_itor + 1;
-		sprintf(str_file_kernel, "./data/kernel_weight/kernel_weight_%d_%d", CPU_Algo_Lib::g_idx_itor, (*iter).GetType());
-		sprintf(str_file_bias, "./data/bias/bias_%d_%d", CPU_Algo_Lib::g_idx_itor, (*iter).GetType());
+		CUDA_Algo_Lib::g_idx_itor = CUDA_Algo_Lib::g_idx_itor + 1;
+		sprintf(str_file_kernel, "./data/kernel_weight/kernel_weight_%d_%d", CUDA_Algo_Lib::g_idx_itor, (*iter).GetType());
+		sprintf(str_file_bias, "./data/bias/bias_%d_%d", CUDA_Algo_Lib::g_idx_itor, (*iter).GetType());
 		//printf("%s", str_file_kernel);
 
 		switch ((*iter).GetType())
@@ -879,7 +876,7 @@ void CPU_Algo_Lib::CPUCNN::LoadParas()
 	}
 }
 
-void CPU_Algo_Lib::CPUCNN::LoadBias(CPU_Algo_Lib::CPUCNNLayer& r_layer, char* str_File_Bias)
+void CUDA_Algo_Lib::CUDACNN::LoadBias(CUDA_Algo_Lib::CUDACNNLayer& r_layer, char* str_File_Bias)
 {
 	size_t layer_outmap_num = r_layer.GetOutMapNum();
 	float bias = 0.0;
@@ -901,7 +898,7 @@ void CPU_Algo_Lib::CPUCNN::LoadBias(CPU_Algo_Lib::CPUCNNLayer& r_layer, char* st
 	
 }
 
-void CPU_Algo_Lib::CPUCNN::LoadKernels(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU_Algo_Lib::CPUCNNLayer& r_lastlayer, char* str_File_Kernel)
+void CUDA_Algo_Lib::CUDACNN::LoadKernels(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer, char* str_File_Kernel)
 {
 	
 	const size_t lastlayer_outmap_num = r_lastlayer.GetOutMapNum();
@@ -948,7 +945,7 @@ void CPU_Algo_Lib::CPUCNN::LoadKernels(CPU_Algo_Lib::CPUCNNLayer& r_layer, CPU_A
 	}
 }
 
-void CPU_Algo_Lib::CPUCNN::Inference(CPU_Algo_Lib::DatasetLoadingParamPKG& r_dataset_param)
+void CUDA_Algo_Lib::CUDACNN::Inference(CUDA_Algo_Lib::DatasetLoadingParamPKG& r_dataset_param)
 {
 	std::cout << "Start Inference" << std::endl;
 
@@ -984,7 +981,7 @@ void CPU_Algo_Lib::CPUCNN::Inference(CPU_Algo_Lib::DatasetLoadingParamPKG& r_dat
 		}
 
 		Forward(vec_inference_batch_data.data());
-		CPU_Algo_Lib::VECCPUCNNLayers::iterator iter = vec_layers_.end();
+		CUDA_Algo_Lib::VECCUDACNNLayers::iterator iter = vec_layers_.end();
 		iter--;
 		for (size_t idx_batch = 0; idx_batch < batch_size_; idx_batch++)
 		{
@@ -1041,8 +1038,8 @@ void CPU_Algo_Lib::CPUCNN::Inference(CPU_Algo_Lib::DatasetLoadingParamPKG& r_dat
 	if( (err=fopen_s(&p_file_false_metrics, "fausePrun.txt", "a")) != 0 )
 		exit(1) ;
 	*/
-	CPU_Algo_Lib::g_idx_epoch++;
-	fprintf(p_file_false_metrics, "epoch: %4d\n", CPU_Algo_Lib::g_idx_epoch);
+	CUDA_Algo_Lib::g_idx_epoch++;
+	fprintf(p_file_false_metrics, "epoch: %4d\n", CUDA_Algo_Lib::g_idx_epoch);
 	fprintf(p_file_false_metrics, "neg: %4d %8f\n", false_1, (float)false_1 / (float)r_dataset_param.num_neg_images_);
 	fprintf(p_file_false_metrics, "pos: %4d %8f\n", false_2, (float)false_2 / (float)r_dataset_param.num_pos_images_);
 	fprintf(p_file_false_metrics, "total: %4d %8f\n\n", total_false, (float)total_false / (float)r_dataset_param.total_num_images_);

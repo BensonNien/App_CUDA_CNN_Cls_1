@@ -24,6 +24,15 @@
     <CudaCompile Include="App_CUDA_CNN_Cls_1.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
+    <CudaCompile Include="CUDACNNLayer.cu">
+      <Filter>Source Files\algorithms_cuda</Filter>
+    </CudaCompile>
+    <CudaCompile Include="CUDACNNCls.cu">
+      <Filter>Source Files\algorithms_cuda</Filter>
+    </CudaCompile>
+    <CudaCompile Include="CUDACNNDataset.cu">
+      <Filter>Source Files\algorithms_cuda</Filter>
+    </CudaCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CPUCNNDataset.h">
@@ -37,6 +46,18 @@
     </ClInclude>
     <ClInclude Include="CPUCNNLayer.h">
       <Filter>Header Files\algorithms</Filter>
+    </ClInclude>
+    <ClInclude Include="CUDACNNCls.cuh">
+      <Filter>Header Files\algorithms_cuda</Filter>
+    </ClInclude>
+    <ClInclude Include="CUDACNNLayer.cuh">
+      <Filter>Header Files\algorithms_cuda</Filter>
+    </ClInclude>
+    <ClInclude Include="CUDACNNDataset.cuh">
+      <Filter>Header Files\algorithms_cuda</Filter>
+    </ClInclude>
+    <ClInclude Include="CUDACNNDataStruct.cuh">
+      <Filter>Header Files\algorithms_cuda</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
