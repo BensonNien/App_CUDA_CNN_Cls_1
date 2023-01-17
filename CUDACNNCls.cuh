@@ -20,6 +20,9 @@ Description: CUDA ver.
 #include "CUDACNNDataset.cuh"
 #include "CUDACNNLayer.cuh"
 
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
 namespace CUDA_Algo_Lib
 {
 	// CNNCls
@@ -31,7 +34,7 @@ namespace CUDA_Algo_Lib
 	public:
 		VECCUDACNNLayers vec_layers_;
 
-		CUDACNNLayerCreater() {};
+		CUDACNNLayerCreater() = default;
 		CUDACNNLayerCreater(CUDA_Algo_Lib::CUDACNNLayer layer) {
 			vec_layers_.push_back(layer);
 		}
@@ -55,19 +58,22 @@ namespace CUDA_Algo_Lib
 	public:
 		CUDACNN(CUDACNNLayerCreater layer_creater, size_t batch_size)
 		{
-			eta_conv_ = 0.006; //learning rate 
-			alpha_conv_ = 0.2;//momentum rate
-			eta_fc_ = 0.006; //learning rate
-			alpha_fc_ = 0.2;//momentum rate
+			eta_conv_ = 0.003; //learning rate 
+			alpha_conv_ = 0.1;//momentum rate
+			eta_fc_ = 0.003; //learning rate
+			alpha_fc_ = 0.1;//momentum rate
 			vec_layers_ = layer_creater.vec_layers_;
 			layer_num_ = vec_layers_.size();
 			batch_size_ = batch_size;
+			//InitCUDADevice();
 			Setup(batch_size);
 			SetupTest(batch_size);
 
 		};
 
 		~CUDACNN() = default;
+
+		cudaError_t static InitCUDADevice();
 
 		void SetBatchsize(size_t batchsize) {
 			batch_size_ = batchsize;
@@ -91,11 +97,11 @@ namespace CUDA_Algo_Lib
 
 		//forward
 		void Forward(float* p_batch_data);
-		void SetInLayerOutput(float* p_batch_data);
-		void SetConvOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer);
-		void SetSampOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer);
-		void SetFCHLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer);
-		void SetOutLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer);
+		cudaError_t SetInLayerOutput(float* p_batch_data);
+		cudaError_t SetConvOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer);
+		cudaError_t SetSampOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer);
+		cudaError_t SetFCHLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer);
+		cudaError_t SetOutLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer);
 
 		//load parameter
 		void LoadParas();

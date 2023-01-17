@@ -5,6 +5,7 @@ Description: CUDA ver.
 ******************************************************************************/
 
 #include "CUDACNNLayer.cuh"
+#include <device_functions.h>
 
 // Utility
 float CUDA_Algo_Lib::EvlElapsedTime()
@@ -15,19 +16,22 @@ float CUDA_Algo_Lib::EvlElapsedTime()
 void CUDA_Algo_Lib::RandomMatrix(size_t size_row, size_t size_col, float* p_kernel)
 {
 	// construct a trivial random generator engine from a time-based seed:
-	unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-	std::default_random_engine generator(seed);
-	std::normal_distribution<float> distribution(0, 0.13);
+	//unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+	//std::default_random_engine generator(seed);
+	//std::normal_distribution<float> distribution(0.0, 0.08);
+	std::random_device rd;
+	std::mt19937 generator(rd());
+	std::normal_distribution<float> distribution(0.0, 0.12);
 
-	std::cout << "--------------- kernel's content -----------------" << std::endl;
+	//std::cout << "--------------- kernel's content -----------------" << std::endl;
 	for (size_t i = 0; i < size_row; i++)
 	{
 		for (size_t j = 0; j < size_col; j++)
 		{
 			p_kernel[i * size_col + j] = distribution(generator);
-			std::cout << std::to_string(p_kernel[i * size_col + j]) << " ";
+			//std::cout << std::to_string(p_kernel[i * size_col + j]) << " ";
 		}
-		std::cout << std::endl;
+		//std::cout << std::endl;
 	}
 }
 
@@ -448,6 +452,85 @@ void CUDA_Algo_Lib::SetKernelValue(float* p_maps, float* p_sum, size_t m, size_t
 	}
 }
 
+// Utility for CUDA
+__global__ void CUDA_Algo_Lib::CUDAConvNValid(float* p_dev_matrix, float* p_dev_kernel,
+	unsigned int dev_shift_idx_matrix, unsigned int dev_shift_idx_kernel,
+	unsigned int dev_map_size_row, unsigned int dev_map_size_col, float* p_dev_outmatrix)
+{
+	unsigned int idx_dev_matrix = dev_shift_idx_matrix + (((blockIdx.x + threadIdx.x) * dev_map_size_col) + (blockIdx.y + threadIdx.y));
+	unsigned int idx_dev_kernel = dev_shift_idx_kernel + ((threadIdx.x * blockDim.y) + threadIdx.y);
+	unsigned int idx_dev_outmatrix = (blockIdx.x * gridDim.y) + blockIdx.y;
+
+	p_dev_outmatrix[idx_dev_outmatrix] += p_dev_matrix[idx_dev_matrix] * p_dev_kernel[idx_dev_kernel];
+}
+
+__global__ void CUDA_Algo_Lib::CUDACalConvArrayPlus(float* p_dev_map_1, float* p_dev_map_2)
+{
+	unsigned int idx_dev_map = (threadIdx.x * blockDim.y) + threadIdx.y;
+
+	p_dev_map_2[idx_dev_map] += p_dev_map_1[idx_dev_map];
+}
+
+__global__ void CUDA_Algo_Lib::CUDAActiveRelu(float* p_dev_matrix, float val_bias)
+{
+	unsigned int idx_dev_matrix = (threadIdx.x * blockDim.y) + threadIdx.y;
+	float val = 0.0;
+
+	val = p_dev_matrix[idx_dev_matrix] + val_bias;
+	__syncthreads();
+	if (val > 0.0) {
+		p_dev_matrix[idx_dev_matrix] = val;
+	}
+	else {
+		p_dev_matrix[idx_dev_matrix] = 0.0;
+	}
+	__syncthreads();
+}
+
+__global__ void CUDA_Algo_Lib::CUDAScaleMatrix(float* p_dev_matrix, unsigned int dev_shift_idx_matrix, unsigned int dev_matrix_cols, float total_scale, float* p_dev_out_matrix)
+{
+	unsigned int idx_dev_outmatrix = (blockIdx.x * gridDim.y) + blockIdx.y;
+	unsigned int idx_dev_matrix = dev_shift_idx_matrix + (((threadIdx.x * blockDim.x) * dev_matrix_cols) + (threadIdx.y * blockDim.y));
+	__shared__ float sum;
+	sum = 0.0;
+	sum += p_dev_matrix[idx_dev_matrix];
+	__syncthreads();
+	p_dev_out_matrix[idx_dev_outmatrix] = sum / total_scale;
+}
+
+__global__ void CUDA_Algo_Lib::CUDACalExpone(float* p_dev_matrix, float val_bias)
+{
+	unsigned int idx_dev_matrix = (threadIdx.x * blockDim.y) + threadIdx.y;
+
+	p_dev_matrix[idx_dev_matrix] = __expf(p_dev_matrix[idx_dev_matrix] + val_bias);
+	__syncthreads();
+
+}
+
+__global__ void CUDA_Algo_Lib::CUDACalSumExpone(float* p_dev_sums_expone, float* p_dev_matrix, unsigned int idx_batch)
+{
+
+	unsigned int idx_dev_matrix = (idx_batch * gridDim.x * blockDim.x * blockDim.y) 
+		+ (blockIdx.x * blockDim.x * blockDim.y)
+		+ ((threadIdx.x * blockDim.y) + threadIdx.y);
+
+	p_dev_sums_expone[idx_batch] += p_dev_matrix[idx_dev_matrix];
+	__syncthreads();
+
+}
+
+__global__ void CUDA_Algo_Lib::CUDACalSoftmax(float* p_dev_matrix, float* p_dev_sums_expone, unsigned int idx_batch)
+{
+
+	unsigned int idx_dev_matrix = (idx_batch * gridDim.x * blockDim.x * blockDim.y)
+		+ (blockIdx.x * blockDim.x * blockDim.y)
+		+ ((threadIdx.x * blockDim.y) + threadIdx.y);
+
+	p_dev_matrix[idx_dev_matrix] /= p_dev_sums_expone[idx_batch];
+	__syncthreads();
+
+}
+
 CUDA_Algo_Lib::CUDACNNLayer CUDA_Algo_Lib::CUDACNNLayer::CreateInputLayer(size_t input_map_num, CUDA_Algo_Lib::RectSize map_size)
 {
 	CUDA_Algo_Lib::CUDACNNLayer layer;
@@ -496,38 +579,22 @@ CUDA_Algo_Lib::CUDACNNLayer CUDA_Algo_Lib::CUDACNNLayer::CreateOutputLayer(size_
 
 }
 
-void CUDA_Algo_Lib::CUDACNNLayer::InitKernel(size_t front_map_num) {
-	vec_kernel_.reserve(front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_);
-	vec_kernel_.resize(front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_);
-	size_t shift_idx_front_map = 0;
-	size_t shift_idx_out_map = 0;
+cudaError_t CUDA_Algo_Lib::CUDACNNLayer::InitKernel(size_t front_map_num) {
+	size_t vec_kernel_size = front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_;
+	vec_kernel_.reserve(vec_kernel_size);
+	vec_kernel_.resize(vec_kernel_size);
+	
+	cudaError_t cudaStatus;
+	// Allocate GPU buffers
+	cudaStatus = cudaMalloc((void**)&p_dev_kernel_, 
+		(vec_kernel_size * sizeof(float)));
 
-	for (size_t i = 0; i < front_map_num; i++)
-	{
-		shift_idx_front_map = i * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_;
-		for (size_t j = 0; j < out_map_num_; j++)
-		{
-			shift_idx_out_map = j * kernel_size_.rows_ * kernel_size_.cols_;
-			RandomMatrix(kernel_size_.rows_, kernel_size_.cols_, (vec_kernel_.data() + shift_idx_front_map + shift_idx_out_map));
-		}
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_kernel_);
+		return cudaStatus;
 	}
-}
-//for adding momentum
-void CUDA_Algo_Lib::CUDACNNLayer::InitLastStepDeltaKernel(size_t front_map_num)
-{
-	vec_laststep_delta_kernel_.reserve(front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_);
-	vec_laststep_delta_kernel_.resize(front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_);
-	vec_laststep_delta_kernel_.assign(vec_laststep_delta_kernel_.size(), 0.0);
-
-	size_t shift_idx_front_map = 0;
-	size_t shift_idx_out_map = 0;
-
-}
-void CUDA_Algo_Lib::CUDACNNLayer::InitOutputKernel(size_t front_map_num, CUDA_Algo_Lib::RectSize Kernel_size)
-{
-	kernel_size_ = Kernel_size;
-	vec_kernel_.reserve(front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_);
-	vec_kernel_.resize(front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_);
+	
 	size_t shift_idx_front_map = 0;
 	size_t shift_idx_out_map = 0;
 
@@ -541,32 +608,273 @@ void CUDA_Algo_Lib::CUDACNNLayer::InitOutputKernel(size_t front_map_num, CUDA_Al
 		}
 	}
 
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_kernel_, vec_kernel_.data(), 
+		vec_kernel_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	//// Check for any errors launching the kernel
+	//cudaStatus = cudaGetLastError();
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "InitKernel failed: %s\n", cudaGetErrorString(cudaStatus));
+	//	return cudaStatus;
+	//}
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_kernel_);
+		return cudaStatus;
+	}
+
+	return cudaStatus;
 }
 //for adding momentum
-void CUDA_Algo_Lib::CUDACNNLayer::InitOutputLastStepDeltaKernel(size_t front_map_num, CUDA_Algo_Lib::RectSize Kernel_size)
+cudaError_t CUDA_Algo_Lib::CUDACNNLayer::InitLastStepDeltaKernel(size_t front_map_num)
+{
+	size_t vec_laststep_delta_kernel_size = front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_;
+	vec_laststep_delta_kernel_.reserve(vec_laststep_delta_kernel_size);
+	vec_laststep_delta_kernel_.resize(vec_laststep_delta_kernel_size);
+	vec_laststep_delta_kernel_.assign(vec_laststep_delta_kernel_.size(), 0.0);
+
+	cudaError_t cudaStatus;
+	// Allocate GPU buffers
+	cudaStatus = cudaMalloc((void**)&p_dev_laststep_delta_kernel_,
+		(vec_laststep_delta_kernel_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_laststep_delta_kernel_);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_laststep_delta_kernel_, vec_laststep_delta_kernel_.data(),
+		vec_laststep_delta_kernel_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	//// Check for any errors launching the kernel
+	//cudaStatus = cudaGetLastError();
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "InitLastStepDeltaKernel failed: %s\n", cudaGetErrorString(cudaStatus));
+	//	return cudaStatus;
+	//}
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_laststep_delta_kernel_);
+		return cudaStatus;
+	}
+
+	return cudaStatus;
+
+}
+cudaError_t CUDA_Algo_Lib::CUDACNNLayer::InitOutputKernel(size_t front_map_num, CUDA_Algo_Lib::RectSize Kernel_size)
 {
 	kernel_size_ = Kernel_size;
-	vec_laststep_delta_kernel_.reserve(front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_);
-	vec_laststep_delta_kernel_.resize(front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_);
-	vec_laststep_delta_kernel_.assign(vec_laststep_delta_kernel_.size(), 0.0);
+	size_t vec_kernel_size = front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_;
+	vec_kernel_.reserve(vec_kernel_size);
+	vec_kernel_.resize(vec_kernel_size);
+
+	cudaError_t cudaStatus;
+	// Allocate GPU buffers
+	cudaStatus = cudaMalloc((void**)&p_dev_kernel_,
+		(vec_kernel_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_kernel_);
+		return cudaStatus;
+	}
+
+	size_t shift_idx_front_map = 0;
+	size_t shift_idx_out_map = 0;
+
+	for (size_t i = 0; i < front_map_num; i++)
+	{
+		shift_idx_front_map = i * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_;
+		for (size_t j = 0; j < out_map_num_; j++)
+		{
+			shift_idx_out_map = j * kernel_size_.rows_ * kernel_size_.cols_;
+			RandomMatrix(kernel_size_.rows_, kernel_size_.cols_, (vec_kernel_.data() + shift_idx_front_map + shift_idx_out_map));
+		}
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_kernel_, vec_kernel_.data(),
+		vec_kernel_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	//// Check for any errors launching the kernel
+	//cudaStatus = cudaGetLastError();
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "InitOutputKernel failed: %s\n", cudaGetErrorString(cudaStatus));
+	//	return cudaStatus;
+	//}
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_kernel_);
+		return cudaStatus;
+	}
+
+	return cudaStatus;
+
 }
-void CUDA_Algo_Lib::CUDACNNLayer::InitErros(size_t batch_size)
+//for adding momentum
+cudaError_t CUDA_Algo_Lib::CUDACNNLayer::InitOutputLastStepDeltaKernel(size_t front_map_num, CUDA_Algo_Lib::RectSize Kernel_size)
 {
-	vec_errors_.reserve(batch_size * out_map_num_ * map_size_.rows_ * map_size_.cols_);
-	vec_errors_.resize(batch_size * out_map_num_ * map_size_.rows_ * map_size_.cols_);
+	kernel_size_ = Kernel_size;
+	size_t vec_laststep_delta_kernel_size = front_map_num * out_map_num_ * kernel_size_.rows_ * kernel_size_.cols_;
+	vec_laststep_delta_kernel_.reserve(vec_laststep_delta_kernel_size);
+	vec_laststep_delta_kernel_.resize(vec_laststep_delta_kernel_size);
+	vec_laststep_delta_kernel_.assign(vec_laststep_delta_kernel_.size(), 0.0);
+
+	cudaError_t cudaStatus;
+	// Allocate GPU buffers
+	cudaStatus = cudaMalloc((void**)&p_dev_laststep_delta_kernel_,
+		(vec_laststep_delta_kernel_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_laststep_delta_kernel_);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_laststep_delta_kernel_, vec_laststep_delta_kernel_.data(),
+		vec_laststep_delta_kernel_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	//// Check for any errors launching the kernel
+	//cudaStatus = cudaGetLastError();
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "InitOutputLastStepDeltaKernel failed: %s\n", cudaGetErrorString(cudaStatus));
+	//	return cudaStatus;
+	//}
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_laststep_delta_kernel_);
+		return cudaStatus;
+	}
+
+	return cudaStatus;
+
+}
+cudaError_t CUDA_Algo_Lib::CUDACNNLayer::InitErros(size_t batch_size)
+{
+	size_t vec_errors_size = batch_size * out_map_num_ * map_size_.rows_ * map_size_.cols_;
+	vec_errors_.reserve(vec_errors_size);
+	vec_errors_.resize(vec_errors_size);
 	vec_errors_.assign(vec_errors_.size(), 0.0);
+
+	cudaError_t cudaStatus;
+	// Allocate GPU buffers
+	cudaStatus = cudaMalloc((void**)&p_dev_errors_,
+		(vec_errors_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_errors_);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_errors_, vec_errors_.data(),
+		vec_errors_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	//// Check for any errors launching the kernel
+	//cudaStatus = cudaGetLastError();
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "InitErros failed: %s\n", cudaGetErrorString(cudaStatus));
+	//	return cudaStatus;
+	//}
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_errors_);
+		return cudaStatus;
+	}
+
+	return cudaStatus;
+
 }
-void CUDA_Algo_Lib::CUDACNNLayer::InitOutputMaps(size_t batch_size)
+cudaError_t CUDA_Algo_Lib::CUDACNNLayer::InitOutputMaps(size_t batch_size)
 {
-	vec_output_maps_.reserve(batch_size * out_map_num_ * map_size_.rows_ * map_size_.cols_);
-	vec_output_maps_.resize(batch_size * out_map_num_ * map_size_.rows_ * map_size_.cols_);
+	size_t vec_output_maps_size = batch_size * out_map_num_ * map_size_.rows_ * map_size_.cols_;
+	vec_output_maps_.reserve(vec_output_maps_size);
+	vec_output_maps_.resize(vec_output_maps_size);
 	vec_output_maps_.assign(vec_output_maps_.size(), 0.0);
+
+	cudaError_t cudaStatus;
+
+	// Allocate GPU buffers
+	cudaStatus = cudaMalloc((void**)&p_dev_output_maps_,
+		(vec_output_maps_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_output_maps_);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_output_maps_, vec_output_maps_.data(),
+		vec_output_maps_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_output_maps_);
+		return cudaStatus;
+	}
+
+	return cudaStatus;
+
 }
-void CUDA_Algo_Lib::CUDACNNLayer::InitBias(size_t front_map_num, size_t idx_iter)
+cudaError_t CUDA_Algo_Lib::CUDACNNLayer::InitBias(size_t front_map_num, size_t idx_iter)
 {
-	vec_bias_.reserve(out_map_num_);
-	vec_bias_.resize(out_map_num_);
-	vec_bias_.assign(vec_bias_.size(), 0.1);
+	size_t vec_bias_size = out_map_num_;
+	vec_bias_.reserve(vec_bias_size);
+	vec_bias_.resize(vec_bias_size);
+	//vec_bias_.assign(vec_bias_.size(), 0.001);
+
+	for (size_t i = 0; i < vec_bias_size; i++)
+	{
+		//unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+		//std::default_random_engine generator(seed);
+		//std::normal_distribution<float> distribution(0.0, 0.005);
+		std::random_device rd;
+		std::mt19937 generator(rd());
+		std::normal_distribution<float> distribution(0.0, 0.01);
+		vec_bias_.at(i) = distribution(generator);
+	}
+
+	cudaError_t cudaStatus;
+	// Allocate GPU buffers
+	cudaStatus = cudaMalloc((void**)&p_dev_bias_,
+		(vec_bias_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_bias_);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_bias_, vec_bias_.data(),
+		vec_bias_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	//// Check for any errors launching the kernel
+	//cudaStatus = cudaGetLastError();
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "InitBias failed: %s\n", cudaGetErrorString(cudaStatus));
+	//	return cudaStatus;
+	//}
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_bias_);
+		return cudaStatus;
+	}
+
+	return cudaStatus;
+
 }
 void CUDA_Algo_Lib::CUDACNNLayer::SetError(size_t num_batch, size_t map_no, size_t map_x, size_t map_y, float error_val)
 {

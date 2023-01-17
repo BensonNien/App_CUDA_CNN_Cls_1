@@ -12,6 +12,8 @@ IDE: VS2019
 
 Library: OpenCV >= 3.4.17 (images read only)
 
+GPU Parallel Computing: CUDA >= 11.6
+
 ### Description
 
 Simple training dataset is included in the folder named "Pedestrian_TrainingDataset_PNG" with balance negtive and position samples.

@@ -20,6 +20,51 @@ namespace CUDA_Algo_Lib
 	size_t g_iteration_num = 0;//number of g_iteration_num
 }
 
+cudaError_t CUDA_Algo_Lib::CUDACNN::InitCUDADevice()
+{
+	printf("========= CUDA_Algo_Lib::CUDACNN::InitCUDADevice() Start =========\n");
+	// part1, check the number of device
+	int  iDeviceCount = 0;
+	cudaGetDeviceCount(&iDeviceCount);
+	printf("Number of GPU: %d\n", iDeviceCount);
+
+	if (iDeviceCount == 0)
+	{
+		printf("No supported GPU!\n");
+	}
+
+	// part2, output information of each device
+	for (int i = 0; i < iDeviceCount; ++i)
+	{
+		printf("=== GPU Device ID: %i ===\n", i);
+		cudaDeviceProp  sDeviceProp;
+		cudaGetDeviceProperties(&sDeviceProp, i);
+		printf("Device name: %s\n", sDeviceProp.name);
+		printf("Device memory: %lld\n", sDeviceProp.totalGlobalMem);
+		printf("Memory per-block: %lld\n", sDeviceProp.sharedMemPerBlock);
+		printf("Register per-block: %lld\n", sDeviceProp.regsPerBlock);
+		printf("Warp size: %lld\n", sDeviceProp.warpSize);
+		printf("Memory pitch: %lld\n", sDeviceProp.memPitch);
+		printf("Constant Memory: %lld\n", sDeviceProp.totalConstMem);
+		printf("Max thread per-block: %lld\n", sDeviceProp.maxThreadsPerBlock);
+		printf("Max thread dim: ( %lld, %lld, %lld )\n", sDeviceProp.maxThreadsDim[0], sDeviceProp.maxThreadsDim[1], sDeviceProp.maxThreadsDim[2]);
+		printf("Max grid size: ( %lld, %lld, %lld )\n", sDeviceProp.maxGridSize[0], sDeviceProp.maxGridSize[1], sDeviceProp.maxGridSize[2]);
+		printf("Ver: %lld.%lld\n", sDeviceProp.major, sDeviceProp.minor);
+		printf("Clock: %lld\n", sDeviceProp.clockRate);
+		printf("textureAlignment: %lld\n", sDeviceProp.textureAlignment);
+	}
+
+	cudaError_t cudaStatus;
+	// Choose which GPU to run on, change this on a multi-GPU system.
+	cudaStatus = cudaSetDevice(0);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+		return cudaStatus;
+	}
+	printf("========= CUDA_Algo_Lib::CUDACNN::InitCUDADevice() End =========\n");
+	return cudaStatus;
+}
+
 void CUDA_Algo_Lib::CUDACNN::Train(CUDA_Algo_Lib::DatasetLoadingParamPKG& r_dataset_param)
 {
 	std::cout << "Start train" << std::endl;
@@ -185,7 +230,7 @@ void CUDA_Algo_Lib::CUDACNN::Forward(float* p_batch_data)
 	}
 }
 
-void CUDA_Algo_Lib::CUDACNN::SetInLayerOutput(float* p_batch_data)
+cudaError_t CUDA_Algo_Lib::CUDACNN::SetInLayerOutput(float* p_batch_data)
 {
 	std::cout << "Execute CUDA_Algo_Lib::CUDACNN::SetInLayerOutput()" << std::endl;
 
@@ -193,11 +238,26 @@ void CUDA_Algo_Lib::CUDACNN::SetInLayerOutput(float* p_batch_data)
 
 	RectSize map_size = (*iter).GetMapSize();
 	size_t out_map_num = (*iter).GetOutMapNum();
+	size_t dev_output_maps_size = batch_size_ * out_map_num * map_size.rows_ * map_size.cols_;
 
-	std::copy(p_batch_data, (p_batch_data + (batch_size_ * out_map_num * map_size.rows_ * map_size.cols_)), (*iter).vec_output_maps_.begin());
+	////std::copy(p_batch_data, (p_batch_data + (batch_size_ * out_map_num * map_size.rows_ * map_size.cols_)), (*iter).vec_output_maps_.begin());
+	memcpy((*iter).vec_output_maps_.data(), p_batch_data, dev_output_maps_size * sizeof(float));
+	
+	cudaError_t cudaStatus;
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy((*iter).p_dev_output_maps_, (*iter).vec_output_maps_.data(),
+		dev_output_maps_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		return cudaStatus;
+	}
+
+	return cudaStatus;
+
 }
 // for change the value in m_Layers
-void CUDA_Algo_Lib::CUDACNN::SetConvOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
+cudaError_t CUDA_Algo_Lib::CUDACNN::SetConvOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
 {
 	std::cout << "Execute CUDA_Algo_Lib::CUDACNN::SetConvOutput()" << std::endl;
 	
@@ -209,8 +269,70 @@ void CUDA_Algo_Lib::CUDACNN::SetConvOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer,
 	size_t layer_kernel_y = r_layer.GetKernelSize().cols_;
 	size_t layer_map_x = r_layer.GetMapSize().rows_;
 	size_t layer_map_y = r_layer.GetMapSize().cols_;
-	std::vector<float> vec_sum(layer_map_x * layer_map_y, 0.0);
-	std::vector<float> vec_sum_now(layer_map_x * layer_map_y, 0.0);
+	size_t layer_map_size = layer_map_x * layer_map_y;
+	std::vector<float> vec_sum(layer_map_size, 0.0);
+	std::vector<float> vec_sum_now(layer_map_size, 0.0);
+	
+	float* p_dev_sums = nullptr;
+	float* p_dev_sums_now = nullptr;
+
+	cudaError_t cudaStatus;
+	// Allocate GPU buffers
+	cudaStatus = cudaMalloc((void**)&p_dev_sums,
+		(layer_map_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_sums);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_sums, vec_sum.data(),
+		layer_map_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_sums);
+		return cudaStatus;
+	}
+
+	cudaStatus = cudaMalloc((void**)&p_dev_sums_now,
+		(layer_map_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_sums_now);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_sums_now, vec_sum_now.data(),
+		layer_map_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_sums_now);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(r_lastlayer.p_dev_output_maps_, r_lastlayer.vec_output_maps_.data(),
+		r_lastlayer.vec_output_maps_.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(r_layer.p_dev_kernel_, r_layer.vec_kernel_.data(),
+		r_layer.vec_kernel_.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		return cudaStatus;
+	}
 
 	for (size_t idx_batch = 0; idx_batch < batch_size_; idx_batch++)
 	{
@@ -220,39 +342,121 @@ void CUDA_Algo_Lib::CUDACNN::SetConvOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer,
 			{
 				size_t shift_idx_lastlayer_batch_map = idx_batch * lastlayer_map_num * lastlayer_map_x * lastlayer_map_y;
 				size_t shift_idx_lastlayer_out_map = j * lastlayer_map_x * lastlayer_map_y;
-				float* p_lastlayer_map = r_lastlayer.vec_output_maps_.data() + shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map;
-				//float** lastMap;
-				//lastMap = r_lastlayer.outputmaps_[idx_batch][j];				
+				unsigned int dev_shift_idx_lastlayer_map = (unsigned int)(shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map);
+				//float* p_lastlayer_map = r_lastlayer.vec_output_maps_.data() + shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map;
+
 				size_t shift_idx_layer_front_kernel = j * layer_map_num * layer_kernel_x * layer_kernel_y;
 				size_t shift_idx_layer_out_kernel = i * layer_kernel_x * layer_kernel_y;
-				float* p_layer_kernel = r_layer.vec_kernel_.data() + shift_idx_layer_front_kernel + shift_idx_layer_out_kernel;
+				unsigned int dev_shift_idx_layer_kernel = (unsigned int)(shift_idx_layer_front_kernel + shift_idx_layer_out_kernel);
+				//float* p_layer_kernel = r_layer.vec_kernel_.data() + shift_idx_layer_front_kernel + shift_idx_layer_out_kernel;
+
+				size_t dev_num_conv_row = lastlayer_map_x - layer_kernel_x + 1;
+				size_t dev_num_conv_col = lastlayer_map_y - layer_kernel_y + 1;
+
+				dim3 dev_dim_grid_conv(dev_num_conv_row, dev_num_conv_col);
+				dim3 dev_dim_block_conv(layer_kernel_x, layer_kernel_y);
+				dim3 dev_dim_block_arrplus(layer_map_x, layer_map_y);
 
 				if (j == 0)
 				{
-					ConvNValid(p_lastlayer_map, p_layer_kernel, lastlayer_map_x, lastlayer_map_y, layer_kernel_x, layer_kernel_y, vec_sum.data());
-					//each time we calculate one image of batch and also calculate relu 
+					
+					//ConvNValid(p_lastlayer_map, p_layer_kernel, lastlayer_map_x, lastlayer_map_y, layer_kernel_x, layer_kernel_y, vec_sum.data());
+					////each time we calculate one image of batch and also calculate relu 
+					CUDAConvNValid <<<dev_dim_grid_conv, dev_dim_block_conv >>> (r_lastlayer.p_dev_output_maps_, r_layer.p_dev_kernel_, 
+						dev_shift_idx_lastlayer_map, dev_shift_idx_layer_kernel, 
+						(unsigned int)lastlayer_map_x, (unsigned int)lastlayer_map_y,
+						p_dev_sums);
+
+					// cudaDeviceSynchronize waits for the kernel to finish, and returns
+					// any errors encountered during the launch.
+					cudaStatus = cudaDeviceSynchronize();
+					if (cudaStatus != cudaSuccess) {
+						fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+						return cudaStatus;
+					}
+
+					// Copy output vector from GPU buffer to host memory.
+					cudaStatus = cudaMemcpy(vec_sum.data(), p_dev_sums, layer_map_size * sizeof(float), cudaMemcpyDeviceToHost);
+					if (cudaStatus != cudaSuccess) {
+						fprintf(stderr, "cudaMemcpy failed!");
+						return cudaStatus;
+					}
 
 				}
 				else {
-					ConvNValid(p_lastlayer_map, p_layer_kernel, lastlayer_map_x, lastlayer_map_y, layer_kernel_x, layer_kernel_y, vec_sum_now.data());
-					CalConvArrayPlus(vec_sum_now.data(), vec_sum.data(), layer_map_x, layer_map_y);// sumNow 
+					//ConvNValid(p_lastlayer_map, p_layer_kernel, lastlayer_map_x, lastlayer_map_y, layer_kernel_x, layer_kernel_y, vec_sum_now.data());
+					//CalConvArrayPlus(vec_sum_now.data(), vec_sum.data(), layer_map_x, layer_map_y);// sumNow 
+					CUDAConvNValid << <dev_dim_grid_conv, dev_dim_block_conv >> > (r_lastlayer.p_dev_output_maps_, r_layer.p_dev_kernel_, 
+						dev_shift_idx_lastlayer_map, dev_shift_idx_layer_kernel, 
+						(unsigned int)lastlayer_map_x, (unsigned int)lastlayer_map_y,
+						p_dev_sums_now);
+
+					// cudaDeviceSynchronize waits for the kernel to finish, and returns
+					// any errors encountered during the launch.
+					cudaStatus = cudaDeviceSynchronize();
+					if (cudaStatus != cudaSuccess) {
+						fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+						return cudaStatus;
+					}
+
+					CUDACalConvArrayPlus << <1, dev_dim_block_arrplus >> > (p_dev_sums_now, p_dev_sums);
+
+					// cudaDeviceSynchronize waits for the kernel to finish, and returns
+					// any errors encountered during the launch.
+					cudaStatus = cudaDeviceSynchronize();
+					if (cudaStatus != cudaSuccess) {
+						fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+						return cudaStatus;
+					}
 
 				}
 			}
 
-			ActiveRelu(vec_sum.data(), r_layer.vec_bias_.at(i), layer_map_x, layer_map_y);//for relu active fun.
+			//ActiveRelu(vec_sum.data(), r_layer.vec_bias_.at(i), layer_map_x, layer_map_y);//for relu active fun.
+
+			dim3 dev_dim_block_active_relu(layer_map_x, layer_map_y);
+			CUDAActiveRelu << <1, dev_dim_block_active_relu >> > (p_dev_sums, r_layer.vec_bias_.at(i));
+
+			// cudaDeviceSynchronize waits for the kernel to finish, and returns
+			// any errors encountered during the launch.
+			cudaStatus = cudaDeviceSynchronize();
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+				return cudaStatus;
+			}
+
+			// Copy output vector from GPU buffer to host memory.
+			cudaStatus = cudaMemcpy(vec_sum.data(), p_dev_sums, 
+				layer_map_size * sizeof(float), cudaMemcpyDeviceToHost);
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaMemcpy failed!");
+				return cudaStatus;
+			}
 
 			size_t shift_idx_layer_batch_map = idx_batch * layer_map_num * layer_map_x * layer_map_y;
 			size_t shift_idx_layer_out_map = i * layer_map_x * layer_map_y;
 			float* p_layer_out_map = r_layer.vec_output_maps_.data() + shift_idx_layer_batch_map + shift_idx_layer_out_map;
 			memcpy(p_layer_out_map, vec_sum.data(), (layer_map_x * layer_map_y * sizeof(float)));
-
 		}
 	}
 
+	cudaFree(p_dev_sums);
+	cudaFree(p_dev_sums_now);
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(r_layer.p_dev_output_maps_, r_layer.vec_output_maps_.data(),
+		r_layer.vec_output_maps_.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		return cudaStatus;
+	}
+
+	return cudaStatus;
+
 }
 
-void CUDA_Algo_Lib::CUDACNN::SetSampOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
+cudaError_t CUDA_Algo_Lib::CUDACNN::SetSampOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
 {
 	std::cout << "Execute CUDA_Algo_Lib::CUDACNN::SetSampOutput()" << std::endl;
 
@@ -261,12 +465,46 @@ void CUDA_Algo_Lib::CUDACNN::SetSampOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer,
 	size_t lastlayer_map_y = r_lastlayer.GetMapSize().cols_;
 	size_t layer_map_x = r_layer.GetMapSize().rows_;
 	size_t layer_map_y = r_layer.GetMapSize().cols_;
+	size_t layer_map_size = layer_map_x * layer_map_y;
 	RectSize scale_size = r_layer.GetScaleSize();
-	std::vector<float> vec_samp_matrix(layer_map_x*layer_map_y, 0.0);
+	std::vector<float> vec_samp_matrix(layer_map_size, 0.0);
+	//float* p_lastlayer_map = NULL;
 
-	float* p_lastlayer_map = NULL;
+	float* p_dev_samp_matrix = nullptr;
+	cudaError_t cudaStatus;
+	cudaStatus = cudaMalloc((void**)&p_dev_samp_matrix,
+		(layer_map_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_samp_matrix);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_samp_matrix, vec_samp_matrix.data(),
+		layer_map_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_samp_matrix);
+		return cudaStatus;
+	}
+
 	size_t shift_idx_lastlayer_batch_map = 0;
 	size_t shift_idx_lastlayer_out_map = 0;
+	size_t dev_shift_idx_lastlayer_map = 0;
+	size_t dev_lastlayer_map_x = lastlayer_map_x;
+	size_t dev_lastlayer_map_y = lastlayer_map_y;
+
+	float dev_total_sacle = (float)(scale_size.rows_ * scale_size.cols_);
+	size_t dev_out_matrix_rows = lastlayer_map_x / scale_size.rows_;
+	size_t dev_out_matrix_cols = lastlayer_map_y / scale_size.cols_;
+	if (dev_out_matrix_rows * scale_size.rows_ != lastlayer_map_x || dev_out_matrix_cols * scale_size.cols_ != lastlayer_map_y)
+	{
+		std::cout << "scale can not divide by p_matrix";
+		exit(0);
+	}
 
 	for (size_t idx_batch = 0; idx_batch < batch_size_; idx_batch++)
 	{
@@ -274,18 +512,53 @@ void CUDA_Algo_Lib::CUDACNN::SetSampOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer,
 		{
 			shift_idx_lastlayer_batch_map = idx_batch * lastlayer_map_num * lastlayer_map_x * lastlayer_map_y;
 			shift_idx_lastlayer_out_map = i * lastlayer_map_x * lastlayer_map_y;
-			p_lastlayer_map = r_lastlayer.vec_output_maps_.data() + shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map;			
-			ScaleMatrix(p_lastlayer_map, scale_size, lastlayer_map_x, lastlayer_map_y, vec_samp_matrix.data());
+			dev_shift_idx_lastlayer_map = shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map;
+			//p_lastlayer_map = r_lastlayer.vec_output_maps_.data() + shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map;			
+			//ScaleMatrix(p_lastlayer_map, scale_size, lastlayer_map_x, lastlayer_map_y, vec_samp_matrix.data());
 			
+			dim3 dev_dim_grid_scale(dev_out_matrix_rows, dev_out_matrix_cols);
+			dim3 dev_dim_block_scale(scale_size.rows_, scale_size.cols_);
+			CUDAScaleMatrix << <dev_dim_grid_scale, dev_dim_block_scale >> > (r_lastlayer.p_dev_output_maps_, (unsigned int)dev_shift_idx_lastlayer_map, (unsigned int)lastlayer_map_y, dev_total_sacle, p_dev_samp_matrix);
+
+			// cudaDeviceSynchronize waits for the kernel to finish, and returns
+			// any errors encountered during the launch.
+			cudaStatus = cudaDeviceSynchronize();
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+				return cudaStatus;
+			}
+
+			// Copy output vector from GPU buffer to host memory.
+			cudaStatus = cudaMemcpy(vec_samp_matrix.data(), p_dev_samp_matrix,
+				layer_map_size * sizeof(float), cudaMemcpyDeviceToHost);
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaMemcpy failed!");
+				return cudaStatus;
+			}
+
 			size_t shift_idx_layer_batch_map = idx_batch * lastlayer_map_num * layer_map_x * layer_map_y;
 			size_t shift_idx_layer_out_map = i * layer_map_x * layer_map_y;
 			float* p_layer_out_map = r_layer.vec_output_maps_.data() + shift_idx_layer_batch_map + shift_idx_layer_out_map;
 			memcpy(p_layer_out_map, vec_samp_matrix.data(), (layer_map_x * layer_map_y * sizeof(float)));
 		}
 	}
+
+	cudaFree(p_dev_samp_matrix);
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(r_layer.p_dev_output_maps_, r_layer.vec_output_maps_.data(),
+		r_layer.vec_output_maps_.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		return cudaStatus;
+	}
+
+	return cudaStatus;
+
 }
 
-void CUDA_Algo_Lib::CUDACNN::SetFCHLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
+cudaError_t CUDA_Algo_Lib::CUDACNN::SetFCHLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
 {
 	std::cout << "Execute CUDA_Algo_Lib::CUDACNN::SetFCHLayerOutput()" << std::endl;
 
@@ -297,8 +570,70 @@ void CUDA_Algo_Lib::CUDACNN::SetFCHLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_la
 	size_t layer_kernel_y = r_layer.GetKernelSize().cols_;
 	size_t layer_map_x = r_layer.GetMapSize().rows_;
 	size_t layer_map_y = r_layer.GetMapSize().cols_;
+	size_t layer_map_size = layer_map_x * layer_map_y;
 	std::vector<float> vec_sum(layer_map_x * layer_map_y, 0.0);
 	std::vector<float> vec_sum_now(layer_map_x * layer_map_y, 0.0);
+
+	float* p_dev_sums = nullptr;
+	float* p_dev_sums_now = nullptr;
+
+	cudaError_t cudaStatus;
+	// Allocate GPU buffers
+	cudaStatus = cudaMalloc((void**)&p_dev_sums,
+		(layer_map_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_sums);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_sums, vec_sum.data(),
+		layer_map_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_sums);
+		return cudaStatus;
+	}
+
+	cudaStatus = cudaMalloc((void**)&p_dev_sums_now,
+		(layer_map_size * sizeof(float)));
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		cudaFree(p_dev_sums_now);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(p_dev_sums_now, vec_sum_now.data(),
+		layer_map_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		cudaFree(p_dev_sums_now);
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(r_lastlayer.p_dev_output_maps_, r_lastlayer.vec_output_maps_.data(),
+		r_lastlayer.vec_output_maps_.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		return cudaStatus;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(r_layer.p_dev_kernel_, r_layer.vec_kernel_.data(),
+		r_layer.vec_kernel_.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		return cudaStatus;
+	}
 
 	for (size_t idx_batch = 0; idx_batch < batch_size_; idx_batch++)
 	{
@@ -308,27 +643,96 @@ void CUDA_Algo_Lib::CUDACNN::SetFCHLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_la
 			{
 				size_t shift_idx_lastlayer_batch_map = idx_batch * lastlayer_map_num * lastlayer_map_x * lastlayer_map_y;
 				size_t shift_idx_lastlayer_out_map = j * lastlayer_map_x * lastlayer_map_y;
-				float* p_lastlayer_map = r_lastlayer.vec_output_maps_.data() + shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map;
+				unsigned int dev_shift_idx_lastlayer_map = (unsigned int)(shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map);
+				//float* p_lastlayer_map = r_lastlayer.vec_output_maps_.data() + shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map;
 			
 				size_t shift_idx_layer_front_kernel = j * layer_map_num * layer_kernel_x * layer_kernel_y;
 				size_t shift_idx_layer_out_kernel = i * layer_kernel_x * layer_kernel_y;
-				float* p_layer_kernel = r_layer.vec_kernel_.data() + shift_idx_layer_front_kernel + shift_idx_layer_out_kernel;
+				unsigned int dev_shift_idx_layer_kernel = (unsigned int)(shift_idx_layer_front_kernel + shift_idx_layer_out_kernel);
+				//float* p_layer_kernel = r_layer.vec_kernel_.data() + shift_idx_layer_front_kernel + shift_idx_layer_out_kernel;
+
+				size_t dev_num_conv_row = lastlayer_map_x - layer_kernel_x + 1;
+				size_t dev_num_conv_col = lastlayer_map_y - layer_kernel_y + 1;
+
+				dim3 dev_dim_grid_conv(dev_num_conv_row, dev_num_conv_col);
+				dim3 dev_dim_block_conv(layer_kernel_x, layer_kernel_y);
+				dim3 dev_dim_block_arrplus(layer_map_x, layer_map_y);
 
 				if (j == 0)
 				{
-					ConvNValid(p_lastlayer_map, p_layer_kernel, lastlayer_map_x, lastlayer_map_y, layer_kernel_x, layer_kernel_y, vec_sum.data());
-					//each time we calculate one image of batch and also calculate relu 
+					//ConvNValid(p_lastlayer_map, p_layer_kernel, lastlayer_map_x, lastlayer_map_y, layer_kernel_x, layer_kernel_y, vec_sum.data());
+					////each time we calculate one image of batch and also calculate relu 
+					CUDAConvNValid << <dev_dim_grid_conv, dev_dim_block_conv >> > (r_lastlayer.p_dev_output_maps_, r_layer.p_dev_kernel_,
+						dev_shift_idx_lastlayer_map, dev_shift_idx_layer_kernel,
+						(unsigned int)lastlayer_map_x, (unsigned int)lastlayer_map_y,
+						p_dev_sums);
 
+					// cudaDeviceSynchronize waits for the kernel to finish, and returns
+					// any errors encountered during the launch.
+					cudaStatus = cudaDeviceSynchronize();
+					if (cudaStatus != cudaSuccess) {
+						fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+						return cudaStatus;
+					}
+
+					// Copy output vector from GPU buffer to host memory.
+					cudaStatus = cudaMemcpy(vec_sum.data(), p_dev_sums, layer_map_size * sizeof(float), cudaMemcpyDeviceToHost);
+					if (cudaStatus != cudaSuccess) {
+						fprintf(stderr, "cudaMemcpy failed!");
+						return cudaStatus;
+					}
 				}
 				else {
-					ConvNValid(p_lastlayer_map, p_layer_kernel, lastlayer_map_x, lastlayer_map_y, layer_kernel_x, layer_kernel_y, vec_sum_now.data());
-					CalFCHArrayPlus(vec_sum_now.data(), vec_sum.data(), layer_map_x, layer_map_y);// sumNow 
+					//ConvNValid(p_lastlayer_map, p_layer_kernel, lastlayer_map_x, lastlayer_map_y, layer_kernel_x, layer_kernel_y, vec_sum_now.data());
+					//CalFCHArrayPlus(vec_sum_now.data(), vec_sum.data(), layer_map_x, layer_map_y);// sumNow 
+
+					CUDAConvNValid << <dev_dim_grid_conv, dev_dim_block_conv >> > (r_lastlayer.p_dev_output_maps_, r_layer.p_dev_kernel_,
+						dev_shift_idx_lastlayer_map, dev_shift_idx_layer_kernel,
+						(unsigned int)lastlayer_map_x, (unsigned int)lastlayer_map_y,
+						p_dev_sums_now);
+
+					// cudaDeviceSynchronize waits for the kernel to finish, and returns
+					// any errors encountered during the launch.
+					cudaStatus = cudaDeviceSynchronize();
+					if (cudaStatus != cudaSuccess) {
+						fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+						return cudaStatus;
+					}
+
+					CUDACalConvArrayPlus << <1, dev_dim_block_arrplus >> > (p_dev_sums_now, p_dev_sums);
+
+					// cudaDeviceSynchronize waits for the kernel to finish, and returns
+					// any errors encountered during the launch.
+					cudaStatus = cudaDeviceSynchronize();
+					if (cudaStatus != cudaSuccess) {
+						fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+						return cudaStatus;
+					}
 
 				}
 			}
 
-			//printf("ActiveRelu");
-			ActiveRelu(vec_sum.data(), r_layer.vec_bias_.at(i), layer_map_x, layer_map_y);//for relu active fun.
+			////printf("ActiveRelu");
+			//ActiveRelu(vec_sum.data(), r_layer.vec_bias_.at(i), layer_map_x, layer_map_y);//for relu active fun.
+
+			dim3 dev_dim_block_active_relu(layer_map_x, layer_map_y);
+			CUDAActiveRelu << <1, dev_dim_block_active_relu >> > (p_dev_sums, r_layer.vec_bias_.at(i));
+
+			// cudaDeviceSynchronize waits for the kernel to finish, and returns
+			// any errors encountered during the launch.
+			cudaStatus = cudaDeviceSynchronize();
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+				return cudaStatus;
+			}
+
+			// Copy output vector from GPU buffer to host memory.
+			cudaStatus = cudaMemcpy(vec_sum.data(), p_dev_sums,
+				layer_map_size * sizeof(float), cudaMemcpyDeviceToHost);
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaMemcpy failed!");
+				return cudaStatus;
+			}
 
 			//SetValue(r_layer.outputmaps_[idx_batch][i], sum, layer_map_x, layer_map_y);
 			size_t shift_idx_layer_batch_map = idx_batch * layer_map_num * layer_map_x * layer_map_y;
@@ -339,10 +743,25 @@ void CUDA_Algo_Lib::CUDACNN::SetFCHLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_la
 		}
 
 	}
+
+	cudaFree(p_dev_sums);
+	cudaFree(p_dev_sums_now);
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(r_layer.p_dev_output_maps_, r_layer.vec_output_maps_.data(),
+		r_layer.vec_output_maps_.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		return cudaStatus;
+	}
+
+	return cudaStatus;
+
 }
 
 // ReLU+Softmax function
-void CUDA_Algo_Lib::CUDACNN::SetOutLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
+cudaError_t CUDA_Algo_Lib::CUDACNN::SetOutLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer)
 {
 	std::cout << "Execute CUDA_Algo_Lib::CUDACNN::SetOutLayerOutput()" << std::endl;
 
@@ -354,9 +773,86 @@ void CUDA_Algo_Lib::CUDACNN::SetOutLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_la
 	size_t layer_kernel_y = r_layer.GetKernelSize().cols_;
 	size_t layer_map_x = r_layer.GetMapSize().rows_;
 	size_t layer_map_y = r_layer.GetMapSize().cols_;
+	size_t layer_map_size = layer_map_x * layer_map_y;
 	std::vector<float> vec_sum(layer_map_x * layer_map_y, 0.0);
 	std::vector<float> vec_sum_now(layer_map_x * layer_map_y, 0.0);
 	std::vector<float> vec_sum_expone(batch_size_, 0.0);
+
+	float* p_dev_sums = nullptr;
+	float* p_dev_sums_now = nullptr;
+	float* p_dev_sums_expone = nullptr;
+
+	cudaError_t cudaStatus;
+	//// Allocate GPU buffers
+	//cudaStatus = cudaMalloc((void**)&p_dev_sums,
+	//	(layer_map_size * sizeof(float)));
+
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "cudaMalloc failed!");
+	//	goto CUDA_ERROR;
+	//}
+
+	//// Copy input vectors from host memory to GPU buffers.
+	//cudaStatus = cudaMemcpy(p_dev_sums, vec_sum.data(),
+	//	layer_map_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "cudaMemcpy failed!");
+	//	goto CUDA_ERROR;
+	//}
+
+	//cudaStatus = cudaMalloc((void**)&p_dev_sums_now,
+	//	(layer_map_size * sizeof(float)));
+
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "cudaMalloc failed!");
+	//	goto CUDA_ERROR;
+	//}
+
+	//// Copy input vectors from host memory to GPU buffers.
+	//cudaStatus = cudaMemcpy(p_dev_sums_now, vec_sum_now.data(),
+	//	layer_map_size * sizeof(float), cudaMemcpyHostToDevice);
+
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "cudaMemcpy failed!");
+	//	goto CUDA_ERROR;
+	//}
+
+	//cudaStatus = cudaMalloc((void**)&p_dev_sums_expone,
+	//	(batch_size_ * sizeof(float)));
+
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "cudaMalloc failed!");
+	//	goto CUDA_ERROR;
+	//}
+
+	//// Copy input vectors from host memory to GPU buffers.
+	//cudaStatus = cudaMemcpy(p_dev_sums_expone, vec_sum_expone.data(),
+	//	batch_size_ * sizeof(float), cudaMemcpyHostToDevice);
+
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "cudaMemcpy failed!");
+	//	goto CUDA_ERROR;
+	//}
+
+	//// Copy input vectors from host memory to GPU buffers.
+	//cudaStatus = cudaMemcpy(r_lastlayer.p_dev_output_maps_, r_lastlayer.vec_output_maps_.data(),
+	//	r_lastlayer.vec_output_maps_.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "cudaMemcpy failed!");
+	//	goto CUDA_ERROR;
+	//}
+
+	//// Copy input vectors from host memory to GPU buffers.
+	//cudaStatus = cudaMemcpy(r_layer.p_dev_kernel_, r_layer.vec_kernel_.data(),
+	//	r_layer.vec_kernel_.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "cudaMemcpy failed!");
+	//	goto CUDA_ERROR;
+	//}
+
 
 	for (size_t idx_batch = 0; idx_batch < batch_size_; idx_batch++)
 	{
@@ -368,26 +864,97 @@ void CUDA_Algo_Lib::CUDACNN::SetOutLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_la
 			{
 				size_t shift_idx_lastlayer_batch_map = idx_batch * lastlayer_map_num * lastlayer_map_x * lastlayer_map_y;
 				size_t shift_idx_lastlayer_out_map = j * lastlayer_map_x * lastlayer_map_y;
+				unsigned int dev_shift_idx_lastlayer_map = (unsigned int)(shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map);
 				float* p_lastlayer_map = r_lastlayer.vec_output_maps_.data() + shift_idx_lastlayer_batch_map + shift_idx_lastlayer_out_map;
 			
 				size_t shift_idx_layer_front_kernel = j * layer_map_num * layer_kernel_x * layer_kernel_y;
 				size_t shift_idx_layer_out_kernel = i * layer_kernel_x * layer_kernel_y;
+				unsigned int dev_shift_idx_layer_kernel = (unsigned int)(shift_idx_layer_front_kernel + shift_idx_layer_out_kernel);
 				float* p_layer_kernel = r_layer.vec_kernel_.data() + shift_idx_layer_front_kernel + shift_idx_layer_out_kernel;
+
+				size_t dev_num_conv_row = lastlayer_map_x - layer_kernel_x + 1;
+				size_t dev_num_conv_col = lastlayer_map_y - layer_kernel_y + 1;
+
+				dim3 dev_dim_grid_conv(dev_num_conv_row, dev_num_conv_col);
+				dim3 dev_dim_block_conv(layer_kernel_x, layer_kernel_y);
+				dim3 dev_dim_block_arrplus(layer_map_x, layer_map_y);
 
 				if (j == 0)
 				{
 					ConvNValid(p_lastlayer_map, p_layer_kernel, lastlayer_map_x, lastlayer_map_y, layer_kernel_x, layer_kernel_y, vec_sum.data());
-					//each time we calculate one image of batch and also calculate relu 
+					
+					////each time we calculate one image of batch and also calculate relu 
+					//CUDAConvNValid << <dev_dim_grid_conv, dev_dim_block_conv >> > (r_lastlayer.p_dev_output_maps_, r_layer.p_dev_kernel_,
+					//	dev_shift_idx_lastlayer_map, dev_shift_idx_layer_kernel,
+					//	(unsigned int)lastlayer_map_x, (unsigned int)lastlayer_map_y,
+					//	p_dev_sums);
+
+					//// cudaDeviceSynchronize waits for the kernel to finish, and returns
+					//// any errors encountered during the launch.
+					//cudaStatus = cudaDeviceSynchronize();
+					//if (cudaStatus != cudaSuccess) {
+					//	fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+					//	goto CUDA_ERROR;
+					//}
+
+					//// Copy output vector from GPU buffer to host memory.
+					//cudaStatus = cudaMemcpy(vec_sum.data(), p_dev_sums, layer_map_size * sizeof(float), cudaMemcpyDeviceToHost);
+					//if (cudaStatus != cudaSuccess) {
+					//	fprintf(stderr, "cudaMemcpy failed!");
+					//	return cudaStatus;
+					//}
 
 				}
 				else {
 					ConvNValid(p_lastlayer_map, p_layer_kernel, lastlayer_map_x, lastlayer_map_y, layer_kernel_x, layer_kernel_y, vec_sum_now.data());
 					CalFCHArrayPlus(vec_sum_now.data(), vec_sum.data(), layer_map_x, layer_map_y);// sumNow 
 
+					//CUDAConvNValid << <dev_dim_grid_conv, dev_dim_block_conv >> > (r_lastlayer.p_dev_output_maps_, r_layer.p_dev_kernel_,
+					//	dev_shift_idx_lastlayer_map, dev_shift_idx_layer_kernel,
+					//	(unsigned int)lastlayer_map_x, (unsigned int)lastlayer_map_y,
+					//	p_dev_sums_now);
+
+					//// cudaDeviceSynchronize waits for the kernel to finish, and returns
+					//// any errors encountered during the launch.
+					//cudaStatus = cudaDeviceSynchronize();
+					//if (cudaStatus != cudaSuccess) {
+					//	fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+					//	goto CUDA_ERROR;
+					//}
+
+					//CUDACalConvArrayPlus << <1, dev_dim_block_arrplus >> > (p_dev_sums_now, p_dev_sums);
+
+					//// cudaDeviceSynchronize waits for the kernel to finish, and returns
+					//// any errors encountered during the launch.
+					//cudaStatus = cudaDeviceSynchronize();
+					//if (cudaStatus != cudaSuccess) {
+					//	fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+					//	goto CUDA_ERROR;
+					//}
+
 				}
 			}
 
 			CalExpone(vec_sum.data(), r_layer.vec_bias_.at(i), layer_map_x, layer_map_y);
+
+			//dim3 dev_dim_block_expone(layer_map_x, layer_map_y);
+			//CUDACalExpone << <1, dev_dim_block_expone >> > (p_dev_sums, r_layer.vec_bias_.at(i));
+			//
+			//// cudaDeviceSynchronize waits for the kernel to finish, and returns
+			//// any errors encountered during the launch.
+			//cudaStatus = cudaDeviceSynchronize();
+			//if (cudaStatus != cudaSuccess) {
+			//	fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+			//	goto CUDA_ERROR;
+			//}
+			// 
+			//// Copy output vector from GPU buffer to host memory.
+			//cudaStatus = cudaMemcpy(vec_sum.data(), p_dev_sums,
+			//	layer_map_size * sizeof(float), cudaMemcpyDeviceToHost);
+			//if (cudaStatus != cudaSuccess) {
+			//	fprintf(stderr, "cudaMemcpy failed!");
+			//	goto CUDA_ERROR;
+			//}
 
 			size_t shift_idx_layer_batch_map = idx_batch * layer_map_num * layer_map_x * layer_map_y;
 			size_t shift_idx_layer_out_map = i * layer_map_x * layer_map_y;
@@ -395,6 +962,15 @@ void CUDA_Algo_Lib::CUDACNN::SetOutLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_la
 			memcpy(p_layer_out_map, vec_sum.data(), (layer_map_x * layer_map_y * sizeof(float)));
 
 		}
+
+		//// Copy input vectors from host memory to GPU buffers.
+		//cudaStatus = cudaMemcpy(r_layer.p_dev_output_maps_, r_layer.vec_output_maps_.data(),
+		//	r_layer.vec_output_maps_.size() * sizeof(float), cudaMemcpyHostToDevice);
+		//
+		//if (cudaStatus != cudaSuccess) {
+		//	fprintf(stderr, "cudaMemcpy failed!");
+		//	return cudaStatus;
+		//}
 
 		for (size_t i = 0; i < layer_map_num; i++)
 		{
@@ -411,13 +987,22 @@ void CUDA_Algo_Lib::CUDACNN::SetOutLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_la
 			}
 		}
 
+		//dim3 dev_dim_grid_sum_expone(layer_map_num);
+		//dim3 dev_dim_block_sum_expone(layer_map_x, layer_map_y);
+		//
+		//CUDACalSumExpone << <dev_dim_grid_sum_expone, dev_dim_block_sum_expone >> > (p_dev_sums_expone, r_layer.p_dev_output_maps_, idx_batch);
+		//cudaStatus = cudaDeviceSynchronize();
+		//if (cudaStatus != cudaSuccess) {
+		//	fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+		//	return cudaStatus;
+		//}
+
 		for (size_t i = 0; i < layer_map_num; i++)
 		{
 			for (size_t ii = 0; ii < layer_map_x; ii++)
 			{
 				for (size_t jj = 0; jj < layer_map_y; jj++)
 				{
-
 					size_t shift_idx_layer_batch_map = idx_batch * layer_map_num * layer_map_x * layer_map_y;
 					size_t shift_idx_layer_out_map = i * layer_map_x * layer_map_y;
 					size_t shift_idx_layer_out_map_row = ii * layer_map_y;
@@ -428,8 +1013,53 @@ void CUDA_Algo_Lib::CUDACNN::SetOutLayerOutput(CUDA_Algo_Lib::CUDACNNLayer& r_la
 				}
 			}
 		}
+		
+		//CUDACalSoftmax << <dev_dim_grid_sum_expone, dev_dim_block_sum_expone >> > (r_layer.p_dev_output_maps_, p_dev_sums_expone, idx_batch);
+		//cudaStatus = cudaDeviceSynchronize();
+		//if (cudaStatus != cudaSuccess) {
+		//	fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+		//	return cudaStatus;
+		//}
+
 	}
 
+	//// Copy output vector from GPU buffer to host memory.
+	//cudaStatus = cudaMemcpy(r_layer.vec_output_maps_.data(), r_layer.p_dev_output_maps_,
+	//	r_layer.vec_output_maps_.size() * sizeof(float), cudaMemcpyDeviceToHost);
+
+	//if (cudaStatus != cudaSuccess) {
+	//	fprintf(stderr, "cudaMemcpy failed!");
+	//	return cudaStatus;
+	//}
+
+	//for (size_t idx_batch = 0; idx_batch < batch_size_; idx_batch++)
+	//{
+	//	for (size_t i = 0; i < layer_map_num; i++)
+	//	{
+	//		for (size_t ii = 0; ii < layer_map_x; ii++)
+	//		{
+	//			for (size_t jj = 0; jj < layer_map_y; jj++)
+	//			{
+	//				size_t shift_idx_layer_batch_map = idx_batch * layer_map_num * layer_map_x * layer_map_y;
+	//				size_t shift_idx_layer_out_map = i * layer_map_x * layer_map_y;
+	//				size_t shift_idx_layer_out_map_row = ii * layer_map_y;
+	//				size_t idx_layer_out_map = shift_idx_layer_batch_map + shift_idx_layer_out_map + shift_idx_layer_out_map_row + jj;
+
+	//				std::cout << "Outputlayer's Softmax actual output(r_layer.outputmaps_[" << idx_batch << "][" << i << "][" << ii << "][" << jj << "]): " << r_layer.vec_output_maps_[idx_layer_out_map] << std::endl;
+	//			}
+	//		}
+	//	}
+	//}
+	
+	return cudaStatus;
+
+CUDA_ERROR:
+	system("pause");
+	cudaFree(p_dev_sums);
+	cudaFree(p_dev_sums_now);
+	cudaFree(p_dev_sums_expone);
+
+	return cudaStatus;
 }
 
 void CUDA_Algo_Lib::CUDACNN::SetOutLayerErrors(float* p_input_maps, float* p_target_labels)

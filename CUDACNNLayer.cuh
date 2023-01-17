@@ -19,9 +19,12 @@ Description: CUDA ver.
 #include "opencv2/opencv.hpp"
 #include "CUDACNNDataset.cuh"
 
-// Utility
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
 namespace CUDA_Algo_Lib
 {
+	// Utility for CPU
 	float EvlElapsedTime();
 	void RandomMatrix(size_t size_row, size_t size_col, float* p_kernel);
 	void ConvNValid(float* p_matrix, float* p_kernel, size_t map_size_row, size_t map_size_col, size_t kernel_size_row, size_t kernel_size_col, float* p_outmatrix);// m n is the dimension of matrix and km kn is the dimension of kernel_, outmatrix is result
@@ -52,8 +55,25 @@ namespace CUDA_Algo_Lib
 	size_t FindIndex(float* p_batch_maps, size_t map_num, size_t map_rows, size_t map_cols);
 	size_t FindIndex(float* p_batch_labels, size_t map_num);
 
-	// CUDACNNLayer
+	// Utility for CUDA
+	__global__ void CUDAConvNValid(float* p_dev_matrix, float* p_dev_kernel,
+		unsigned int dev_shift_idx_matrix, unsigned int dev_shift_idx_kernel,
+		unsigned int dev_map_size_row, unsigned int dev_map_size_col, float* p_dev_outmatrix);
 
+	__global__ void CUDACalConvArrayPlus(float* p_dev_map_1, float* p_dev_map_2);
+
+	__global__ void CUDAActiveRelu(float* p_dev_matrix, float val_bias);
+
+	__global__ void CUDAScaleMatrix(float* p_dev_matrix, unsigned int dev_shift_idx_matrix, unsigned int dev_matrix_cols, float total_scale, float* p_dev_out_matrix);
+
+	__global__ void CUDACalExpone(float* p_dev_matrix, float val_bias);
+
+	__global__ void CUDACalSumExpone(float* p_dev_sums_expone, float* p_dev_matrix, unsigned int idx_batch);
+
+	__global__ void CUDACalSoftmax(float* p_dev_matrix, float* p_dev_sums_expone, unsigned int idx_batch);
+
+
+	// CUDACNNLayer
 	class CUDACNNLayer
 	{
 	private:
@@ -69,13 +89,27 @@ namespace CUDA_Algo_Lib
 
 	public:
 		CUDACNNLayer() = default;
-		~CUDACNNLayer() {};
+		~CUDACNNLayer() {
+			cudaFree(p_dev_kernel_);
+			cudaFree(p_dev_laststep_delta_kernel_);
+			cudaFree(p_dev_output_maps_);
+			cudaFree(p_dev_errors_);
+			cudaFree(p_dev_bias_);
+		};
 
+		// Host's memory
 		std::vector<float> vec_kernel_;
-		std::vector<float> vec_laststep_delta_kernel_;//for adding momentum
+		std::vector<float> vec_laststep_delta_kernel_; //for adding momentum
 		std::vector<float> vec_output_maps_;
 		std::vector<float> vec_errors_;
 		std::vector<float> vec_bias_;
+
+		// Device's memory
+		float* p_dev_kernel_;
+		float* p_dev_laststep_delta_kernel_; //for adding momentum
+		float* p_dev_output_maps_;
+		float* p_dev_errors_;
+		float* p_dev_bias_;
 
 		CUDACNNLayer CreateInputLayer(size_t input_map_num, CUDA_Algo_Lib::RectSize map_size);
 		CUDACNNLayer CreateConvLayer(size_t input_map_num, size_t output_map_num, CUDA_Algo_Lib::RectSize kernel_size);
@@ -84,13 +118,13 @@ namespace CUDA_Algo_Lib
 		//CUDACNNLayer CreateOutputLayer(size_t input_element_num, size_t output_element_num, size_t class_num);
 		CUDACNNLayer CreateOutputLayer(size_t class_num);
 
-		void InitKernel(size_t front_map_num);
-		void InitLastStepDeltaKernel(size_t front_map_num);//for adding momentum
-		void InitOutputKernel(size_t front_map_num, CUDA_Algo_Lib::RectSize Kernel_size);
-		void InitOutputLastStepDeltaKernel(size_t front_map_num, CUDA_Algo_Lib::RectSize Kernel_size);//for adding momentum
-		void InitErros(size_t batch_size);
-		void InitOutputMaps(size_t batch_size);
-		void InitBias(size_t front_map_num, size_t idx_iter);
+		cudaError_t InitKernel(size_t front_map_num);
+		cudaError_t InitLastStepDeltaKernel(size_t front_map_num);//for adding momentum
+		cudaError_t InitOutputKernel(size_t front_map_num, CUDA_Algo_Lib::RectSize Kernel_size);
+		cudaError_t InitOutputLastStepDeltaKernel(size_t front_map_num, CUDA_Algo_Lib::RectSize Kernel_size);//for adding momentum
+		cudaError_t InitErros(size_t batch_size);
+		cudaError_t InitOutputMaps(size_t batch_size);
+		cudaError_t InitBias(size_t front_map_num, size_t idx_iter);
 
 		void SetError(size_t num_batch, size_t map_no, size_t map_x, size_t map_y, float error_val);
 		float* GetError(size_t num_batch, size_t map_no) {
