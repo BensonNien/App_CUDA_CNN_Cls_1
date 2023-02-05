@@ -66,12 +66,19 @@ namespace CUDA_Algo_Lib
 
 	__global__ void CUDAScaleMatrix(float* p_dev_matrix, unsigned int dev_shift_idx_matrix, unsigned int dev_matrix_cols, float total_scale, float* p_dev_out_matrix);
 
+	__global__ void CUDAShiftAssignValue(float* p_dev_out_matrix, unsigned int dev_shift_idx_matrix, float* p_dev_matrix);
+
 	__global__ void CUDACalExpone(float* p_dev_matrix, float val_bias);
 
 	__global__ void CUDACalSumExpone(float* p_dev_sums_expone, float* p_dev_matrix, unsigned int idx_batch);
 
-	__global__ void CUDACalSoftmax(float* p_dev_matrix, float* p_dev_sums_expone, unsigned int idx_batch);
+	__global__ void CUDACalSoftmax(float* p_dev_out_matrix, float* p_dev_in_matrix, unsigned int idx_batch);
 
+	__global__ void CUDACalDerivActiveReLUFCH(float* p_dev_out_matrix, float* p_dev_in_matrix);// calculate derivation of ReLU function in FChiddenlayer with matrix
+
+	__global__ void CUDACalSumRightTernLocalGradientFCH(float* p_dev_out_matrix, float* p_dev_in_error_matrix, float* p_dev_in_kernel_matrix);
+
+	__global__ void CUDACalElementwiseMultiplication(float* p_dev_out_matrix, float* p_dev_in_matrix_1, float* p_dev_in_matrix_2);
 
 	// CUDACNNLayer
 	class CUDACNNLayer

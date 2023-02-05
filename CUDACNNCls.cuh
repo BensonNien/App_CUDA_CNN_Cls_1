@@ -58,10 +58,10 @@ namespace CUDA_Algo_Lib
 	public:
 		CUDACNN(CUDACNNLayerCreater layer_creater, size_t batch_size)
 		{
-			eta_conv_ = 0.003; //learning rate 
-			alpha_conv_ = 0.1;//momentum rate
-			eta_fc_ = 0.003; //learning rate
-			alpha_fc_ = 0.1;//momentum rate
+			eta_conv_ = 0.0018; //learning rate 
+			alpha_conv_ = 0.01;//momentum rate
+			eta_fc_ = 0.0018; //learning rate
+			alpha_fc_ = 0.01;//momentum rate
 			vec_layers_ = layer_creater.vec_layers_;
 			layer_num_ = vec_layers_.size();
 			batch_size_ = batch_size;
@@ -86,10 +86,10 @@ namespace CUDA_Algo_Lib
 		//back-propagation
 		void BackPropagation(float* p_batch_data, float* p_batch_label);
 		void SetOutLayerErrors(float* p_input_maps, float* p_target_labels);
-		void SetHiddenLayerErrors();
-		void SetFCHiddenLayerErrors(CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer, CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_nextlayer);
+		void SetHiddenLayerErrors();		
 		void SetSampErrors(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_nextlayer);
 		void SetConvErrors(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_nextlayer);
+		cudaError_t SetFCHiddenLayerErrors(CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer, CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_nextlayer);
 
 		void UpdateKernels(CUDA_Algo_Lib::CUDACNNLayer& r_layer, CUDA_Algo_Lib::CUDACNNLayer& r_lastlayer, char* str_File_Kernel, float eta, float alpha);
 		void UpdateBias(CUDA_Algo_Lib::CUDACNNLayer& r_layer, char* str_File_Bias, float eta);

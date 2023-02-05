@@ -21,7 +21,7 @@ void CUDA_Algo_Lib::RandomMatrix(size_t size_row, size_t size_col, float* p_kern
 	//std::normal_distribution<float> distribution(0.0, 0.08);
 	std::random_device rd;
 	std::mt19937 generator(rd());
-	std::normal_distribution<float> distribution(0.0, 0.12);
+	std::normal_distribution<float> distribution(0.0, 0.13); //0.12
 
 	//std::cout << "--------------- kernel's content -----------------" << std::endl;
 	for (size_t i = 0; i < size_row; i++)
@@ -498,11 +498,19 @@ __global__ void CUDA_Algo_Lib::CUDAScaleMatrix(float* p_dev_matrix, unsigned int
 	p_dev_out_matrix[idx_dev_outmatrix] = sum / total_scale;
 }
 
+__global__ void CUDA_Algo_Lib::CUDAShiftAssignValue(float* p_dev_out_matrix, unsigned int dev_shift_idx_matrix, float* p_dev_matrix)
+{
+	unsigned int idx_dev_matrix = (threadIdx.x * blockDim.y) + threadIdx.y;
+	unsigned int idx_dev_outmatrix = dev_shift_idx_matrix + ((threadIdx.x * blockDim.y) + threadIdx.y);
+
+	p_dev_out_matrix[idx_dev_outmatrix] = p_dev_matrix[idx_dev_matrix];
+}
+
 __global__ void CUDA_Algo_Lib::CUDACalExpone(float* p_dev_matrix, float val_bias)
 {
 	unsigned int idx_dev_matrix = (threadIdx.x * blockDim.y) + threadIdx.y;
 
-	p_dev_matrix[idx_dev_matrix] = __expf(p_dev_matrix[idx_dev_matrix] + val_bias);
+	p_dev_matrix[idx_dev_matrix] = expf(p_dev_matrix[idx_dev_matrix] + val_bias);
 	__syncthreads();
 
 }
@@ -510,26 +518,66 @@ __global__ void CUDA_Algo_Lib::CUDACalExpone(float* p_dev_matrix, float val_bias
 __global__ void CUDA_Algo_Lib::CUDACalSumExpone(float* p_dev_sums_expone, float* p_dev_matrix, unsigned int idx_batch)
 {
 
-	unsigned int idx_dev_matrix = (idx_batch * gridDim.x * blockDim.x * blockDim.y) 
-		+ (blockIdx.x * blockDim.x * blockDim.y)
+	unsigned int idx_dev_matrix = (idx_batch * gridDim.y * blockDim.x * blockDim.y)
+		+ (blockIdx.y * blockDim.x * blockDim.y)
 		+ ((threadIdx.x * blockDim.y) + threadIdx.y);
 
 	p_dev_sums_expone[idx_batch] += p_dev_matrix[idx_dev_matrix];
-	__syncthreads();
-
 }
 
-__global__ void CUDA_Algo_Lib::CUDACalSoftmax(float* p_dev_matrix, float* p_dev_sums_expone, unsigned int idx_batch)
+__global__ void CUDA_Algo_Lib::CUDACalSoftmax(float* p_dev_out_matrix, float* p_dev_in_matrix, unsigned int idx_batch)
 {
 
-	unsigned int idx_dev_matrix = (idx_batch * gridDim.x * blockDim.x * blockDim.y)
-		+ (blockIdx.x * blockDim.x * blockDim.y)
+	unsigned int idx_dev_matrix = (idx_batch * gridDim.y * blockDim.x * blockDim.y)
+		+ (blockIdx.y * blockDim.x * blockDim.y)
 		+ ((threadIdx.x * blockDim.y) + threadIdx.y);
 
-	p_dev_matrix[idx_dev_matrix] /= p_dev_sums_expone[idx_batch];
-	__syncthreads();
+	p_dev_out_matrix[idx_dev_matrix] /= p_dev_in_matrix[idx_batch];
 
 }
+
+__global__ void CUDA_Algo_Lib::CUDACalDerivActiveReLUFCH(float* p_dev_out_matrix, float* p_dev_in_matrix)
+{
+	unsigned int idx_dev_matrix = (blockIdx.x * gridDim.y * blockDim.x * blockDim.y)
+		+ (blockIdx.y * blockDim.x * blockDim.y)
+		+ ((threadIdx.x * blockDim.y) + threadIdx.y);
+	float val = 0.0;
+
+	val = p_dev_in_matrix[idx_dev_matrix];
+	__syncthreads();
+	if (val > 0.0) {
+		p_dev_out_matrix[idx_dev_matrix] = 1.0;
+	}
+	else {
+		p_dev_out_matrix[idx_dev_matrix] = 0.0;
+	}
+	__syncthreads();
+}
+
+__global__ void CUDA_Algo_Lib::CUDACalSumRightTernLocalGradientFCH(float* p_dev_out_matrix, float* p_dev_in_error_matrix, float* p_dev_in_kernel_matrix)
+{
+	unsigned int idx_dev_out_matrix = (blockIdx.x * gridDim.y) + blockIdx.y;
+	unsigned int idx_dev_in_error_matrix = (blockIdx.x * blockDim.x) + threadIdx.x;
+	unsigned int idx_dev_in_kernel_matrix = (blockIdx.y * blockDim.x) + threadIdx.x;
+	__shared__ float sum;
+
+	sum = 0.0;
+	sum += (p_dev_in_error_matrix[idx_dev_in_error_matrix] * p_dev_in_kernel_matrix[idx_dev_in_kernel_matrix]);
+	__syncthreads();
+
+	p_dev_out_matrix[idx_dev_out_matrix] = sum;
+}
+
+__global__ void CUDA_Algo_Lib::CUDACalElementwiseMultiplication(float* p_dev_out_matrix, float* p_dev_in_matrix_1, float* p_dev_in_matrix_2)
+{
+	unsigned int idx_dev_matrix = (blockIdx.x * gridDim.y * blockDim.x * blockDim.y)
+		+ (blockIdx.y * blockDim.x * blockDim.y)
+		+ ((threadIdx.x * blockDim.y) + threadIdx.y);
+
+	p_dev_out_matrix[idx_dev_matrix] = p_dev_in_matrix_1[idx_dev_matrix] * p_dev_in_matrix_2[idx_dev_matrix];
+
+}
+
 
 CUDA_Algo_Lib::CUDACNNLayer CUDA_Algo_Lib::CUDACNNLayer::CreateInputLayer(size_t input_map_num, CUDA_Algo_Lib::RectSize map_size)
 {
@@ -841,7 +889,7 @@ cudaError_t CUDA_Algo_Lib::CUDACNNLayer::InitBias(size_t front_map_num, size_t i
 		//std::normal_distribution<float> distribution(0.0, 0.005);
 		std::random_device rd;
 		std::mt19937 generator(rd());
-		std::normal_distribution<float> distribution(0.0, 0.01);
+		std::normal_distribution<float> distribution(0.0, 0.008);
 		vec_bias_.at(i) = distribution(generator);
 	}
 

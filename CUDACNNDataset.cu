@@ -8,7 +8,7 @@ void CUDA_Algo_Lib::CNNDataset::Load(CUDA_Algo_Lib::DatasetLoadingParamPKG& r_da
 	for (size_t k = 0; k < r_dataset_param.num_pos_images_; k++)//330
 	{
 		std::string input_pos_image_path = r_dataset_param.pos_images_root_path_ + std::to_string(k) + r_dataset_param.images_ext_;
-		std::cout << "input_pos_image_path: " + input_pos_image_path << std::endl;
+		//std::cout << "input_pos_image_path: " + input_pos_image_path << std::endl;
 
 		cv::Mat input_posimg1 = cv::imread(input_pos_image_path, cv::IMREAD_COLOR);
 		//imshow("input_posimg1", input_posimg1);
@@ -51,7 +51,7 @@ void CUDA_Algo_Lib::CNNDataset::Load(CUDA_Algo_Lib::DatasetLoadingParamPKG& r_da
 	for (size_t k = 0; k < r_dataset_param.num_neg_images_; k++)//15
 	{
 		std::string input_neg_image_path = r_dataset_param.neg_images_root_path_ + std::to_string(k) + r_dataset_param.images_ext_;
-		std::cout << "input_neg_image_path: " + input_neg_image_path << std::endl;
+		//std::cout << "input_neg_image_path: " + input_neg_image_path << std::endl;
 
 		cv::Mat input_negimg1 = cv::imread(input_neg_image_path, cv::IMREAD_COLOR);
 		//imshow("input_negimg1", input_negimg1);

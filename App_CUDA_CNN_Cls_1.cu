@@ -17,7 +17,8 @@ int main()
 {
     std::cout << "\n====================== Prog. Start ======================\n";
     
-    RunCPUAIFlow();
+    //RunCPUAIFlow();
+    RunCUDAAIFlow();
 
     std::cout << "\n====================== Prog. End ======================\n";
     return 0;
@@ -181,7 +182,7 @@ cudaError_t RunCUDAAIFlow()
     CUDA_Algo_Lib::CUDACNN cnn = CUDA_Algo_Lib::CUDACNN(layer_creater, 2);// batchsize
 
     float t0 = CUDA_Algo_Lib::EvlElapsedTime();
-    //cnn.LoadParas();//load kernel weight & bias
+    // cnn.LoadParas();//load kernel weight & bias
 
     for (size_t i = 0; i < 2; i++)//i is training epoch
     {
