@@ -17,8 +17,8 @@ int main()
 {
     std::cout << "\n====================== Prog. Start ======================\n";
     
-    //RunCPUAIFlow();
-    RunCUDAAIFlow();
+    RunCPUAIFlow();
+    //RunCUDAAIFlow();
 
     std::cout << "\n====================== Prog. End ======================\n";
     return 0;
